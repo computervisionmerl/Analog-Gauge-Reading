@@ -1,12 +1,7 @@
 import cv2
 import numpy as np
 from math import atan2, sqrt, sin, cos, degrees
-
-def euclidean_dist(point1 : tuple, point2 : tuple) -> int:
-    """
-    Returns pixel euclidean distance between 2 points
-    """
-    return int(np.sqrt((point1[0] - point2[0])**2 + (point1[1] - point2[1])**2))
+from helper import euclidean_dist
 
 class Needle:
     def __init__(self) -> None:
@@ -34,7 +29,9 @@ class Needle:
 
     @staticmethod
     def _extend_line_segment(center_line_x : int, needle_line : np.array) -> tuple:
-        ## Returns the coordinates of the point of intersection ==> Center of the needle
+        """
+        Returns the coordinates of the point of intersection ==> Center of the needle
+        """
         x1, y1, x2, y2 = needle_line
 
         if x1 == x2:
