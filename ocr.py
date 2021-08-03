@@ -10,6 +10,7 @@ import easyocr
 import string
 import matplotlib.pyplot as plt
 from collections import OrderedDict
+from helper include euclidean_dist
 
 """
 Line numbers 64, 66 for MIN/MAX gauge
@@ -84,6 +85,9 @@ class Ocr:
         return;
 
     def _get_roi(self, bestmodel : np.ndarray) -> np.array:
+        """
+        Gets the image with only tick marks based on the fit polynomial and the heuristic to define the ROI
+        """
         mask = np.zeros((self.w, self.h), dtype=np.uint8)
         for i in range(self.w):
             x = (i - self.old_mu_x) / self.old_std_x
@@ -96,18 +100,19 @@ class Ocr:
         return mask
 
     def _fit_polynomial(self, n=100) -> np.ndarray:
+        """
+        Fits a 2nd degree polynomial through fixed points in the image
+        These are points on the bounding box given by OCR, and are chosen based on the distance from the center of the image
+        """
         x = []; y = []
         for _, val in self.lookup.items():
             (tl, tr, br, bl, _) = val
             dist_dict = {
                 euclidean_dist(tl, (self.w//2, self.h//2)) : tl,
                 euclidean_dist(tr, (self.w//2, self.h//2)) : tr,
-                #euclidean_dist(br, image_center) : br,
-                #euclidean_dist(bl, image_center) : bl
             }
             largest_key = max(dist_dict)
             x.append(dist_dict[largest_key][0]); y.append(dist_dict[largest_key][1])
-            #x.append((tl[0]+tr[0])//2); y.append((tl[1]+tr[1])//2)
 
         x = np.array(x); y = np.array(y)
         if len(x) > 3:
@@ -120,27 +125,6 @@ class Ocr:
         ## New normalized data (0 mean, 1 std dev)
         x = (x - x.mean()) / x.std() 
         y = (y - y.mean()) / y.std()
-
-        """
-        ## Curve fitting
-        iterations = 0
-        bestmodel = None
-        besterr = 1e20
-        while iterations < n:
-            x_fit = []; y_fit = []
-            for _ in range(50): # 50
-                random_idx = random.randint(0,len(x)-1)
-                x_fit.append(x[random_idx]); y_fit.append(y[random_idx])
-            
-            poly = np.polyfit(x_fit,y_fit,2)
-            z_fit = np.polyval(poly, x_fit)
-            err = np.sum((z_fit - y_fit)**2)
-            if err < besterr:
-                besterr = err
-                bestmodel = poly
-
-            iterations += 1
-        """
 
         ## Curve fitting
         iterations = 0
