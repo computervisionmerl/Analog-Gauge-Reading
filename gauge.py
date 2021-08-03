@@ -3,7 +3,7 @@ from math import sqrt
 from numpy.core.function_base import linspace
 from needle import Needle
 from ocr import Ocr
-from math import hypot
+from helper import calulate_brightness, euclidean_dist
 
 import cv2
 import numpy as np
@@ -39,6 +39,10 @@ class Gauge_reader(object):
         return (hat, canny_needle, canny_tick)
 
     def _pair_ticks_with_numbers(self, canny : np.array) -> dict:
+        """
+        Very primitive way of pairing the numbers with the tick marks 
+        Contour closest to the number is the tick mark corresponding to the number
+        """
         ticks = cv2.findContours(canny, cv2.RETR_LIST, cv2.CHAIN_APPROX_NONE)[0]
         pair_dict = {}
         for key, (tl, _, br, _, _) in self.ocr.lookup.items():
@@ -96,7 +100,6 @@ class Gauge_reader(object):
         pair_dict = self._pair_ticks_with_numbers(canny_tick.copy())
         for _, box in pair_dict.items():
             cv2.drawContours(image, [box], -1, (0,255,0), 2)
-        #cv2.line(image, (self.needle.needle[0], self.needle.needle[1]), (self.needle.needle[2], self.needle.needle[3]), (255,0,0), 2)
 
         import matplotlib.pyplot as plt
         ax = plt.axes()
@@ -104,13 +107,6 @@ class Gauge_reader(object):
         ax.plot(x, z, 'blue')
         ax.plot(x, z-50, 'red')
         plt.show()
-        
-        ## Find coordinates of tick marks and associate them with the closest number
-        #pair_dict = self._pair_ticks_with_numbers(canny_tick.copy())
-        #needle_tip = (self.needle.needle[0], self.needle.needle[1])
-        #for key, box in pair_dict.items():
-        #    print(key)
-        #    cv2.drawContours(image, [box], 0, (0,255,0), 2)
 
         cv2.imshow("image", image)
         cv2.waitKey(0)  
