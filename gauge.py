@@ -1,217 +1,194 @@
-from math import sqrt
-
-from numpy.core.function_base import linspace
-from needle import Needle
-from ocr import Ocr
-from helper import calulate_brightness, euclidean_dist
+from time import time
+import warnings
 
 import cv2
 import numpy as np
+from ocr import Ocr
+from needle import Needle
+from helper import *
 
-class Gauge_reader(object):
-    def __init__(self):
+class Gauge(object):
+    def __init__(self) -> None:
         super().__init__()
         self.ocr = Ocr()
         self.needle = Needle()
 
+        self.brightness_param = 0.58
         self.contrast_param = 70
-        self.brightness_param = 0.58 #0.48
 
-    def _pre_processing(self, image : np.array, visualize : bool = False) -> np.array:
+    def _pre_processing(self, image : np.array) -> np.ndarray:
+        """
+        Some basic image pre_processing techniques
+        The first is for needle estimation and center extraction
+
+        The next set is for the OCR.
+        First is contrast enhancement (if needed), next comes denoising of the image,
+        and finally morphological transformation based on whether gauge has white or
+        black background (to enhance the text from the background)
+        """
         gray = cv2.cvtColor(image, cv2.COLOR_RGB2GRAY)
-        ## Contrast enhancement if needed
+        self.w, self.h = gray.shape
+        canny = cv2.Canny(gray, 85, 255)
+
         if gray.std() < self.contrast_param:
             gray = cv2.equalizeHist(gray)
-        ## Image denoising 
         blur = cv2.GaussianBlur(gray, (5,5), 5)
 
-        ## Check white / dark background
         if calculate_brightness(image) > self.brightness_param:
             print("White Gauge")
-            hat = cv2.morphologyEx(blur, cv2.MORPH_BLACKHAT, cv2.getStructuringElement(cv2.MORPH_RECT, (35,35)))
+            return (cv2.morphologyEx(blur, cv2.MORPH_BLACKHAT, cv2.getStructuringElement(cv2.MORPH_RECT, (35,35))), canny)
         else:
             print("Black Gauge")
-            hat = cv2.morphologyEx(blur, cv2.MORPH_TOPHAT, cv2.getStructuringElement(cv2.MORPH_RECT, (35,35)))
-        
-        ## Egde detection for needle estimation
-        canny_needle = cv2.Canny(gray, 85, 255)
-        canny_tick = cv2.Canny(hat, 85, 255)
-        return (hat, canny_needle, canny_tick)
+            return (cv2.morphologyEx(blur, cv2.MORPH_TOPHAT, cv2.getStructuringElement(cv2.MORPH_RECT, (35,35))), canny)
 
-    def _pair_ticks_with_numbers(self, canny : np.array) -> dict:
+    def _get_roi_mask(self, c1 : tuple, c2 : tuple) -> np.array:
         """
-        Very primitive way of pairing the numbers with the tick marks 
-        Contour closest to the number is the tick mark corresponding to the number
+        Gets a circular ROI (points in between 2 cirles), the other pixels are blacked out
+        Need the argument for the circles in the format (cx, cy, r)
+        c1 --> Bigger circle and c2 --> Smaller circle
         """
-        ticks = cv2.findContours(canny, cv2.RETR_LIST, cv2.CHAIN_APPROX_NONE)[0]
-        pair_dict = {}
-        for key, (tl, _, br, _, _) in self.ocr.lookup.items():
-            center_bb = ((tl[0]+br[0])//2, (tl[1]+br[1])//2)
-            min_dist = 1e20
-            for tick in ticks:
-                rect = cv2.minAreaRect(tick); (center, (_,_), _) = rect
-                box = np.int0(cv2.boxPoints(rect))
-                dist = euclidean_dist(center, center_bb)
-                if dist < min_dist:
-                    min_dist = dist
-                    pair_dict[key] = box
-                
-        return pair_dict
+        mask = np.zeros((self.w, self.h), dtype=np.uint8)
+        for j in range(0,self.h):
+            for i in range(0,self.w):
+                if point_inside_circle((c1[0],c1[1]), c1[2], (i,j)) and not point_inside_circle((c2[0],c2[1]), c2[2], (i,j)):
+                    mask[j,i] = 255
+        return mask
 
-    def _get_arc_length(self, x1 : float, x2 : float, bestmodel : np.ndarray, n_steps : int = 1000) -> int:
+    def _extract_ticks(self, canny : np.array) -> np.ndarray:
         """
-        Estimates the length along the polynomial curve (bestmodel) between the ticks near the minimum and 
-        maximum numbers. This applies piecewise linear approximation to the curve to estimate the length
+        Tries to extract the ticks based on OCR located numbers 
+            (since the ticks are radially outward as seen from the center of the gauge)
+
+        Picking points for the ROI contour for extracting the region only with ticks
         """
-        ## x1 and x2 are normalized but the length is scaled back to pixel coordinates before returning
-        x1 = (x1 - self.ocr.old_mu_x) / self.ocr.old_std_x
-        x2 = (x2 - self.ocr.old_mu_x) / self.ocr.old_std_x
-        length = 0.0
-        dx = (x2 - x1) / n_steps
-        curr_x = x1
+        points = []
+        for _,v in self.ocr.lookup.items():
+            (tl, tr, br, bl, _) = v
+            dist_dict = {
+                euclidean_dist(tl, self.needle.center) : tl,
+                euclidean_dist(tr, self.needle.center) : tr,
+                euclidean_dist(br, self.needle.center) : br,
+                euclidean_dist(bl, self.needle.center) : bl
+            }
+            largest_key = max(dist_dict)
+            points.append((dist_dict[largest_key][0], dist_dict[largest_key][1]))
 
-        while curr_x <= x2:
-            prev_x = curr_x
-            prev_y = np.polyval(bestmodel, prev_x)
-            curr_x = curr_x + dx
-            curr_y = np.polyval(bestmodel, curr_x)
+        if len(points) < 3:
+            """
+            Without at least 3 points in the contour, we cannot compute the ROI mask and hence cannot  isolate
+            the tick marks in the image. The reading has to come from the numbers, this is inaccurate sometimes
+            """
+            warnings.warn("Less than 3 OCR values, gauge reading is not accurate", RuntimeWarning, stacklevel=1)
+            tl, _, br, _, _ = self.ocr.lookup[self.ocr.max_text]
+            self.max_tick_center = ((tl[0] + br[0])//2, (tl[1] + br[1])//2)
+            tl, _, br, _, _ = self.ocr.lookup[self.ocr.min_text]
+            self.min_tick_center = ((tl[0] + br[0])//2, (tl[1] + br[1])//2)
+            print(self._calculate_gauge_reading())
+            return (None, None)
 
-            x_start = prev_x*self.ocr.old_std_x + self.ocr.old_mu_x
-            y_start = prev_y*self.ocr.old_std_y + self.ocr.old_mu_y
-            x_finish = curr_x*self.ocr.old_std_x + self.ocr.old_mu_x
-            y_finish = curr_y*self.ocr.old_std_y + self.ocr.old_mu_y
+        ((cx, cy), r) = define_circle(points[0], points[1], points[2])
+        mask = self._get_roi_mask((cx,cy,r+50),(cx,cy,r))
+        masked_canny = cv2.bitwise_and(canny, canny, mask=mask)
+        ticks = cv2.findContours(masked_canny, cv2.RETR_TREE, cv2.CHAIN_APPROX_SIMPLE)[0]
 
-            length += euclidean_dist((x_start, y_start), (x_finish, y_finish))
-        
-        return length
+        return (ticks, masked_canny)
+
+    def _find_min_max_ticks(self) -> None:
+        """
+        Find the ticks closest to the minimum and maximum values detected by the OCR
+        Stores their centroid values for angular position computation
+        """
+        tl, _, br, _, _ = self.ocr.lookup[self.ocr.max_text]
+        center_max = (int((tl[0] + br[0])/2), int((tl[1] + br[1])/2))
+        tl, _, br, _, _ = self.ocr.lookup[self.ocr.min_text]
+        center_min = (int((tl[0] + br[0])/2), int((tl[1] + br[1])/2))
+
+        dist_max_number = 1e20; dist_min_number = 1e20
+        for tick in self.ticks:
+            x,y,w,h = cv2.boundingRect(tick)
+            centroid = (x + w//2, y + h//2)
+
+            if euclidean_dist(centroid, center_max) < dist_max_number:
+                dist_max_number = euclidean_dist(centroid, center_max)
+                self.max_tick_center =  centroid
+
+            if euclidean_dist(centroid, center_min) < dist_min_number:
+                dist_min_number = euclidean_dist(centroid, center_min)
+                self.min_tick_center = centroid
+
+        return;
+
+    def _calculate_gauge_reading(self):
+        """
+        Computes the value read by the needle based on the locations of the ticks, needle 
+        """
+        needle_tip = (self.needle.needle[0], self.needle.needle[1])
+        angle_max_tic = self.needle._find_angle_based_on_quadrant(self.needle._find_quadrant(self.max_tick_center), self.max_tick_center)
+        angle_min_tic = self.needle._find_angle_based_on_quadrant(self.needle._find_quadrant(self.min_tick_center), self.min_tick_center)
+        angle_needle = self.needle._find_angle_based_on_quadrant(self.needle._find_quadrant(needle_tip), needle_tip)
+
+        dial_angle = angle_max_tic - angle_min_tic
+        angle_needle_min_tic = angle_needle - angle_min_tic
+        calibration_range = self.ocr.max_text - self.ocr.min_text
+        reading_per_degree_rotation = calibration_range / dial_angle
+        return angle_needle_min_tic * reading_per_degree_rotation + self.ocr.min_text
 
     def _read_gauge(self, image : np.array) -> None:
-        hat, canny_needle, canny_tick = self._pre_processing(image.copy())
-        self.ocr._recognize_digits(hat.copy())
-        
-        ## Extract the needle 
-        self.needle._isolate_needle(canny_needle)
+        start = time()
+        (hat, canny) = self._pre_processing(image)
+        self.ocr._recognize_digits(hat)
+        self.needle._isolate_needle(canny)
+        self.ocr._correct_ocr(self.needle.center)
+        (self.ticks, _) = self._extract_ticks(canny.copy())
+        if self.ticks is not None:
+            self._find_min_max_ticks()
+            print(self._calculate_gauge_reading())
 
-        ## Extract the segment with the tick marks
-        (x, z, bestmodel) = self.ocr._fit_polynomial()
-        mask = self.ocr._get_roi(bestmodel)
-        canny_tick[mask == 0] = 0
-
-        pair_dict = self._pair_ticks_with_numbers(canny_tick.copy())
-        for _, box in pair_dict.items():
-            cv2.drawContours(image, [box], -1, (0,255,0), 2)
-
-        import matplotlib.pyplot as plt
-        ax = plt.axes()
-        ax.imshow(image)
-        ax.plot(x, z, 'blue')
-        ax.plot(x, z-50, 'red')
-        plt.show()
-
-        cv2.imshow("image", image)
-        cv2.waitKey(0)  
-
-    def _get_gauge_value(self) -> float:
-        ## At this point, we have the bounding boxes, needle and center computed along with the calibration done (min and max of gauge)
-        if self.ocr.min_text == 1e20 or self.ocr.max_text == 0:
-            raise ValueError("Not all computations done, OCR not finished properly")
-        
-        if self.needle.needle is None or self.needle.center is None:
-            raise ValueError("Not all computations done, Needle estimation not finished properly")
-
-        ## Coordinates of the minimum and maximum detected text values
-        min_point, max_point = None, None
-        for box, text, prob in self.ocr.result:
-            if prob > self.ocr.prob:
-                (tl, tr, br, bl) = box
-                tl = (int(tl[0]), int(tl[1]))
-                tr = (int(tr[0]), int(tr[1]))
-                bl = (int(bl[0]), int(bl[1]))
-                br = (int(br[0]), int(br[1]))
-
-                if (text == str(self.ocr.min_text) or text == "MIN") and min_point is None:
-                    min_point = (int((int(tl[0]) + int(br[0]))/2), int((int(tl[1]) + int(br[1]))/2))
-                if (text == str(self.ocr.max_text) or text == "MAX") and max_point is None:
-                    max_point = (int((int(tl[0]) + int(br[0]))/2), int((int(tl[1]) + int(br[1]))/2))
-
-        quad_min_number = self.needle._find_quadrant(min_point)
-        quad_max_number = self.needle._find_quadrant(max_point)
-        quad_needle_point = self.needle._find_quadrant((self.needle.needle[0], self.needle.needle[1]))
-
-        ## Find angle of min, max and needle wrt downward y axis
-        angle_min_number = self.needle._find_angle_based_on_quadrant(quad_min_number, min_point)
-        angle_max_number = self.needle._find_angle_based_on_quadrant(quad_max_number, max_point)
-        angle_needle_line = self.needle._find_angle_based_on_quadrant(quad_needle_point, (self.needle.needle[0], self.needle.needle[1]))
-
-        ## Find angles of needle and max wrt min
-        angle_line_min = angle_needle_line - angle_min_number
-        angle_min_max = angle_max_number - angle_min_number
-        calibration_range = self.ocr.max_text - self.ocr.min_text
-        value_per_degree = calibration_range / angle_min_max
-        return value_per_degree * angle_line_min + self.ocr.min_text
+        print("Time elapsed = {}s".format(time() - start, ".4f"))
+        self._visualize(image)
+        return;
 
     def _visualize(self, image : np.array) -> None:
         if self.needle.needle is not None:
-            cv2.line(image, (self.needle.needle[0],self.needle.needle[1]), (self.needle.needle[2],self.needle.needle[3]), (255,0,0), 2)
+            l = self.needle.needle
+            cv2.line(image, (l[0], l[1]), (l[2], l[3]), (255,0,0), 2)
 
         if self.needle.center is not None:
-            cv2.circle(image, (self.needle.center[0], self.needle.center[1]), 5, (255,0,0), -1, cv2.LINE_AA)
+            cv2.circle(image, self.needle.center, 5, (255,0,0), -1, cv2.LINE_AA)
 
-        if self.ocr.result:
-            for box, text, prob in self.ocr.result:
-                if prob > self.ocr.prob:
-                    (tl, tr, br, bl) = box
-                    tl = (int(tl[0]), int(tl[1]))
-                    tr = (int(tr[0]), int(tr[1]))
-                    bl = (int(bl[0]), int(bl[1]))
-                    br = (int(br[0]), int(br[1]))
+        for _,v in self.ocr.lookup.items():
+            (tl, tr, br, bl, text) = v
+            ## Drawing a tilted rectangle
+            cv2.line(image, tl, tr, (0,255,0), 2, cv2.LINE_AA)
+            cv2.line(image, tr, br, (0,255,0), 2, cv2.LINE_AA)
+            cv2.line(image, br, bl, (0,255,0), 2, cv2.LINE_AA)
+            cv2.line(image, bl, tl, (0,255,0), 2, cv2.LINE_AA)
 
-                    ## Drawing a tilted rectangle
-                    cv2.line(image, tl, tr, (0,255,0), 2, cv2.LINE_AA)
-                    cv2.line(image, tr, br, (0,255,0), 2, cv2.LINE_AA)
-                    cv2.line(image, br, bl, (0,255,0), 2, cv2.LINE_AA)
-                    cv2.line(image, bl, tl, (0,255,0), 2, cv2.LINE_AA)
+            cv2.putText(image, text, (tl[0], tl[1] + 10), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0,0,255), 2)
 
-                    cv2.putText(image, text, (tl[0], tl[1] + 10), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0,0,255), 2)
+        cv2.circle(image, self.min_tick_center, 3, (0,128,255), -1)
+        cv2.line(image, self.needle.center, self.min_tick_center, (0,255,0), 2, cv2.LINE_AA)
+        cv2.circle(image, self.max_tick_center, 3, (0,128,255), -1)
+        cv2.line(image, self.needle.center, self.max_tick_center, (0,255,0), 2, cv2.LINE_AA)
 
-                    if text == str(self.ocr.min_text) or text == str(self.ocr.max_text) or text == "MIN" or text == "MAX":
-                        point = (int((int(tl[0]) + int(br[0]))/2), int((int(tl[1]) + int(br[1]))/2))
-                        cv2.line(image, self.needle.center, point, (0,255,0), 2, cv2.LINE_AA)
-
-        length_of_needle = sqrt((self.needle.center[0] - self.needle.needle[0])**2 + 
-                                (self.needle.center[1] - self.needle.needle[1])**2)
-        cv2.circle(image, self.needle.center, int(length_of_needle), (0,0,0), 2, cv2.LINE_AA)
-        cv2.line(image, (int(self.needle.w/2), 0), (int(self.needle.w/2), self.needle.h), (0,0,0), 2, cv2.LINE_AA)
-        cv2.imshow("Image", image)
+        cv2.imshow("image", image)
         cv2.waitKey(0)
         return;
 
-
-def main():
-    reader = Gauge_reader()
+def main() -> None:
+    gauge = Gauge()
     # Black background gauge
     #image = cv2.resize(cv2.imread("gauge images/qualitrol_oil_gauge.jpg"), (800,800), interpolation=cv2.INTER_CUBIC)
     #image = cv2.resize(cv2.imread("gauge images/qualitrol_winding_gauge.jpg"), (800,800), interpolation=cv2.INTER_CUBIC)
     #image = cv2.resize(cv2.imread("gauge images/qualitrol_transformer_gauge.jpg"), (800,800), interpolation=cv2.INTER_CUBIC)
+    image = cv2.resize(cv2.imread("gauge images/qualitrol_negative_gauge.jpg"), (800,800), interpolation=cv2.INTER_CUBIC)  ## --> OCR too bad (misty glass)
     #image = cv2.resize(cv2.imread("gauge images/thyoda_actual_gauge.jpg"), (800,800), interpolation=cv2.INTER_CUBIC)
     #image = cv2.resize(cv2.imread("gauge images/spot_ptz_gauge.jpg"), (800,800), interpolation=cv2.INTER_CUBIC)
-    #image = cv2.resize(cv2.imread("gauge images/qualitrol_small_gauge.jfif"), (800,800), interpolation=cv2.INTER_CUBIC)
 
     # White background gauge
     #image = cv2.resize(cv2.imread("gauge images/white_pressure_gauge.jpg"), (800,800), interpolation=cv2.INTER_CUBIC)
 
-    # Spot PTZ images
-    #image = cv2.resize(cv2.imread("ptz gauge images/spot_ptz_gauge.jpg"), (800,800), interpolation=cv2.INTER_CUBIC)
-    #image = cv2.resize(cv2.imread("ptz gauge images/spot_ptz_gasvolume_gauge.jpg"), (800,800), interpolation=cv2.INTER_CUBIC)
-    #image = cv2.resize(cv2.imread("ptz gauge images/spot_ptz_lowhigh_gauge.jpg"), (800,800), interpolation=cv2.INTER_CUBIC)
-    #image = cv2.resize(cv2.imread("ptz gauge images/spot_ptz_gaspressure_gauge.jpg"), (800,800), interpolation=cv2.INTER_CUBIC)
-    #image = cv2.resize(cv2.imread("ptz gauge images/spot_ptz_hilo_gauge.jpg"), (800,800), interpolation=cv2.INTER_CUBIC)
-    image = cv2.resize(cv2.imread("ptz gauge images/spot_ptz_liquidsmall_gauge.jpg"), (800,800), interpolation=cv2.INTER_CUBIC)
-    #image = cv2.resize(cv2.imread("ptz gauge images/spot_ptz_liquidtemp_gauge.jpg"), (800,800), interpolation=cv2.INTER_CUBIC)
-    #image = cv2.resize(cv2.imread("ptz gauge images/spot_ptz_minmax_gauge.jpg"), (800,800), interpolation=cv2.INTER_CUBIC)
-    #image = cv2.resize(cv2.imread("ptz gauge images/spot_ptz_pump_gauge.jpg"), (800,800), interpolation=cv2.INTER_CUBIC)
-
-    reader._read_gauge(image)
+    gauge._read_gauge(image)
 
 if __name__ == "__main__":
     main()
