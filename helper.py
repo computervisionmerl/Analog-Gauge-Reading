@@ -1,21 +1,14 @@
-import numpy as np
 import cv2
+import numpy as np
 from math import sqrt
 
 """
-This script defines helper functions for the gauge reading to work
+Script with all the helper functions necessary for gauge reading
 """
-
-def euclidean_dist(point1 : tuple, point2 : tuple) -> int:
-    """
-    Returns pixel euclidean distance between 2 points
-    """
-    return sqrt((point1[0] - point2[0])**2 + (point1[1] - point2[1])**2)
 
 def calculate_brightness(image : np.array) -> float:
     """
-    Checks whether the gauge has a black or white background depending on the image brightness
-    This is under the assumption that the gauge occupies the majority of area in an image
+    Checks whether the gauge has a black or a white background based on image brightness
     """
     gray = cv2.cvtColor(image, cv2.COLOR_RGB2GRAY)
     hist = cv2.calcHist([gray], [0], None, [256], [0,256])
@@ -28,41 +21,44 @@ def calculate_brightness(image : np.array) -> float:
 
     return 1.0 if brightness == 255 else float(brightness/scale)
 
-def func(x, a, b, c):
-    """
-    Objective function for least squares minimization
-    """
-    return a*x**2 + b*x + c    
 
-def residual(p, x, y):
+def define_circle(p1 : tuple, p2 : tuple, p3 : tuple) -> tuple:
     """
-    Residual function for least squares optimization
+    Returns the center and radius of the circle passing the given 3 points
+    In case the 3 points form a line, returns (center, radius) = (None, infinity)
     """
-    return y - func(x, *p)
+    temp = p2[0] * p2[0] + p2[1] * p2[1]
+    bc = (p1[0] * p1[0] + p1[1] * p1[1] - temp) / 2
+    cd = (temp - p3[0] * p3[0] - p3[1] * p3[1]) / 2
+    det = (p1[0] - p2[0]) * (p2[1] - p3[1]) - (p2[0] - p3[0]) * (p1[1] - p2[1])
 
-def find_quadrant(point : tuple, center : tuple) -> int:
-    """
-    Returns the quadrant of a point based on the the coordinates of the point and center 
-    Coordinate system is anticlockwise starting from top right as 1st quadrant
-    """
-    ## First quadrant --> x(+ve), y(-ve)
-    if point[0] >= center[0] and point[1] < center[1]:
-        return 1
-    
-    ## Second quadrant --> x(-ve), y(-ve)
-    elif point[0] < center[0] and point[1] <= center[1]:
-        return 2
-    
-    ## Third quadrant --> x(-ve), y(+ve)
-    elif point[0] <= center[0] and point[1] > center[1]:
-        return 3
+    if abs(det) < 1.0e-6:
+        return (None, np.inf)
 
-    ## Fourth quadrant --> x(+ve), y(+ve)
-    elif point[0] > center[0] and point[1] >= center[1]:
-        return 4
+    # Center of circle
+    cx = (bc*(p2[1] - p3[1]) - cd*(p1[1] - p2[1])) / det
+    cy = ((p1[0] - p2[0]) * cd - (p2[0] - p3[0]) * bc) / det
 
+    radius = np.sqrt((cx - p1[0])**2 + (cy - p1[1])**2)
+    return ((int(cx), int(cy)), int(radius))
+
+
+def point_inside_circle(center, radius, point) -> bool:
+    """
+    Checks whether a given point lies inside the circle or not
+    """
+    dx = abs(center[0] - point[0])
+    dy = abs(center[1] - point[1])
+    if dx**2 + dy**2 <= radius**2: 
+        return True
     else:
-        raise ValueError("Quadrant is not identified")
+        return False
+
+def euclidean_dist(point1 : tuple, point2 : tuple) -> int:
+    """
+    Returns pixel euclidean distance between 2 points
+    """
+    return int(sqrt((point1[0] - point2[0])**2 + (point1[1] - point2[1])**2))
 
 def warp_image(canny : np.array) -> np.array:
     """
