@@ -1,14 +1,21 @@
-import cv2
 import numpy as np
+import cv2
 from math import sqrt
 
 """
-Script with all the helper functions necessary for gauge reading
+This script defines helper functions for the gauge reading to work
 """
+
+def euclidean_dist(point1 : tuple, point2 : tuple) -> float:
+    """
+    Returns pixel euclidean distance between 2 points
+    """
+    return sqrt((point1[0] - point2[0])**2 + (point1[1] - point2[1])**2)
 
 def calculate_brightness(image : np.array) -> float:
     """
-    Checks whether the gauge has a black or a white background based on image brightness
+    Checks whether the gauge has a black or white background depending on the image brightness
+    This is under the assumption that the gauge occupies the majority of area in an image
     """
     gray = cv2.cvtColor(image, cv2.COLOR_RGB2GRAY)
     hist = cv2.calcHist([gray], [0], None, [256], [0,256])
@@ -21,50 +28,58 @@ def calculate_brightness(image : np.array) -> float:
 
     return 1.0 if brightness == 255 else float(brightness/scale)
 
-
-def define_circle(p1 : tuple, p2 : tuple, p3 : tuple) -> tuple:
+def find_quadrant(point : tuple, center : tuple) -> int:
     """
-    Returns the center and radius of the circle passing the given 3 points
-    In case the 3 points form a line, returns (center, radius) = (None, infinity)
+    Returns the quadrant of a point based on the the coordinates of the point and center 
+    Coordinate system is anticlockwise starting from top right as 1st quadrant
     """
-    temp = p2[0] * p2[0] + p2[1] * p2[1]
-    bc = (p1[0] * p1[0] + p1[1] * p1[1] - temp) / 2
-    cd = (temp - p3[0] * p3[0] - p3[1] * p3[1]) / 2
-    det = (p1[0] - p2[0]) * (p2[1] - p3[1]) - (p2[0] - p3[0]) * (p1[1] - p2[1])
+    ## First quadrant --> x(+ve), y(-ve)
+    if point[0] >= center[0] and point[1] < center[1]:
+        return 1
+    
+    ## Second quadrant --> x(-ve), y(-ve)
+    elif point[0] < center[0] and point[1] <= center[1]:
+        return 2
+    
+    ## Third quadrant --> x(-ve), y(+ve)
+    elif point[0] <= center[0] and point[1] > center[1]:
+        return 3
 
-    if abs(det) < 1.0e-6:
-        return (None, np.inf)
+    ## Fourth quadrant --> x(+ve), y(+ve)
+    elif point[0] > center[0] and point[1] >= center[1]:
+        return 4
 
-    # Center of circle
-    cx = (bc*(p2[1] - p3[1]) - cd*(p1[1] - p2[1])) / det
-    cy = ((p1[0] - p2[0]) * cd - (p2[0] - p3[0]) * bc) / det
-
-    radius = np.sqrt((cx - p1[0])**2 + (cy - p1[1])**2)
-    return ((int(cx), int(cy)), int(radius))
-
-
-def point_inside_circle(center, radius, point) -> bool:
-    """
-    Checks whether a given point lies inside the circle or not
-    """
-    dx = abs(center[0] - point[0])
-    dy = abs(center[1] - point[1])
-    if dx**2 + dy**2 <= radius**2: 
-        return True
     else:
-        return False
+        raise ValueError("Quadrant is not identified")
 
-def euclidean_dist(point1 : tuple, point2 : tuple) -> int:
+def get_arc_length(x1 : float, x2 : float, bestmodel : np.poly1d, n_steps : int = 1000) -> float:
     """
-    Returns pixel euclidean distance between 2 points
+    Calculates the arclength along a polynomial curve using piecewise linear estimation
+    of the curve (Usually done using line integrals but can be approximated to piecewise
+    linear estimate)
     """
-    return int(sqrt((point1[0] - point2[0])**2 + (point1[1] - point2[1])**2))
+    length = 0.0
+    dx = (x2 - x1) / n_steps
+    curr_x = x1
 
-def warp_image(canny : np.array) -> np.array:
+    while curr_x <= x2:
+        prev_x = curr_x
+        prev_y = np.polyval(bestmodel, prev_x)
+        curr_x = curr_x + dx
+        curr_y = np.polyval(bestmodel, curr_x)
+
+        x_start = prev_x; y_start = prev_y
+        x_finish = curr_x; y_finish = curr_y
+
+        length += euclidean_dist((x_start, y_start), (x_finish, y_finish))
+    
+    return length 
+
+def warp_image(image : np.array) -> np.array:
     """
     Computes an affine warp transformation matrix to transform an ellipse back to a circle
     """
-    contours, _ = cv2.findContours(canny, cv2.RETR_TREE, cv2.CHAIN_APPROX_SIMPLE)
+    contours, _ = cv2.findContours(image, cv2.RETR_TREE, cv2.CHAIN_APPROX_SIMPLE)
     areas = [cv2.contourArea(cnt) for cnt in contours]
     sorted_areas = np.sort(areas)
     cnt = contours[areas.index(sorted_areas[-1])] ## Largest contour
@@ -73,7 +88,7 @@ def warp_image(canny : np.array) -> np.array:
     angle = params[2]; scale = params[1]
     scale = scale[0] / scale[1]
 
-    M = cv2.getRotationMatrix2D((canny.shape[0]/2, canny.shape[1]/2), angle, 1)
+    M = cv2.getRotationMatrix2D((image.shape[0]/2, image.shape[1]/2), angle, 1)
     M[:,0:2] = np.array([[1,0],[0,scale]]) @ M[:,0:2]
     M[1,2] = M[1,2] * scale
     return M
