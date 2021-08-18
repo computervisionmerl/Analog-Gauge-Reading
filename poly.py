@@ -37,7 +37,8 @@ class Poly:
         self.w, self.h = canny.shape
         (self.x_line, self.y_line) = self.needle._isolate_needle(canny)
 
-    def _fit_curve(self, x : np.array, y : np.array) -> np.ndarray:
+    @staticmethod
+    def _fit_curve(x : np.array, y : np.array) -> np.ndarray:
         """
         Fits a quadratic curve through a set of data points using
         least squares fitting
@@ -62,7 +63,8 @@ class Poly:
         
         return bestmodel
 
-    def _fit_line(self, x : np.array, y : np.array) -> np.ndarray:
+    @staticmethod
+    def _fit_line(x : np.array, y : np.array) -> np.ndarray:
         """
         Line fitting using 2-point formula
         """
