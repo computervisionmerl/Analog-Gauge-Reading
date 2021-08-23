@@ -1,6 +1,6 @@
 import numpy as np
 import cv2
-from math import sqrt
+from random import randint
 
 """
 This script defines helper functions for the gauge reading to work
@@ -10,7 +10,7 @@ def euclidean_dist(point1 : tuple, point2 : tuple) -> float:
     """
     Returns pixel euclidean distance between 2 points
     """
-    return sqrt((point1[0] - point2[0])**2 + (point1[1] - point2[1])**2)
+    return np.sqrt((point1[0] - point2[0])**2 + (point1[1] - point2[1])**2)
 
 def calculate_brightness(image : np.array) -> float:
     """
@@ -74,6 +74,37 @@ def get_arc_length(x1 : float, x2 : float, bestmodel : np.poly1d, n_steps : int 
         length += euclidean_dist((x_start, y_start), (x_finish, y_finish))
     
     return length 
+
+def fit_curve(x : np.array, y : np.array) -> np.ndarray:    
+    """
+    Fits a quadratic curve through a set of data points using
+    least squares fitting
+    """
+    iterations = 0
+    bestmodel = None
+    besterr = 1e20
+    while iterations < 50:
+        x_fit = []; y_fit = []
+        for _ in range(50): # 50
+            random_idx = randint(0,len(x)-1)
+            x_fit.append(x[random_idx]); y_fit.append(y[random_idx])
+        
+        poly = np.polyfit(x_fit, y_fit, 2)
+        z_fit = np.polyval(poly, x_fit)
+        err = np.sum((z_fit - y_fit)**2)
+        if err < besterr:
+            besterr = err
+            bestmodel = poly
+
+        iterations += 1
+    
+    return bestmodel
+
+def fit_line(x : np.array, y : np.array) -> np.ndarray:
+    """
+    Line fitting using 2-point formula
+    """
+    return np.polyfit(x, y, 1)
 
 def warp_image(image : np.array) -> np.array:
     """
