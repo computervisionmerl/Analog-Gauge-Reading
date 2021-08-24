@@ -24,11 +24,14 @@ class Gauge(object):
         super().__init__()
         self.needle = Needle()
         self.ocr = Ocr()
+        self.reset()
 
     def reset(self):
         self.needle.reset()
         self.ocr.reset()
         self.val = None
+        self.area_thresh = 100
+        self.ratio_thresh = 0.8
 
     def _read_gauge(self, image : np.array, visualize : bool = True, needle = "white") -> None:
         start = time.time()
@@ -68,7 +71,7 @@ class Gauge(object):
             return;
         
         ## Get regionprops and extract tick mark locations
-        ticks, pairs = run_regionprops(image.copy(), self.ocr.lookup, self.ocr.mask, area_thresh=100, ratio_thresh=0.8)
+        ticks, pairs = run_regionprops(image.copy(), self.ocr.lookup, self.ocr.mask, self.area_thresh, self.ratio_thresh)
         dist = {}
         for number, (tick_centroid, bb_centroid) in pairs.items():
             dist[euclidean_dist(tip, bb_centroid)] = region(number, tick_centroid, bb_centroid)
