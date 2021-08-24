@@ -3,14 +3,14 @@ import numpy as np
 from skimage import measure
 from helper import *
 
-def run_regionprops(image : np.array, lookup : dict, ocr_mask : np.array) -> np.ndarray:
+def run_regionprops(image : np.array, lookup : dict, ocr_mask : np.array, area_thresh : int = 200, ratio_thresh : float = 0.8) -> np.ndarray:
     """
     Compute properties of disconnected regions --> bbox, centroid, min enclosing rectangle, pixel area of region, etc.
     Filters out all the non rectangle areas and again passes only those ones which are above a certain pixel area. This
     is to ensure that only major tick marks are selected
     """
     gray = cv2.cvtColor(image, cv2.COLOR_RGB2GRAY)
-    if gray.std() > 73: # or gray.std() < 35:
+    if gray.std() > 73 or gray.std() < 35:
         gray = cv2.equalizeHist(gray)
 
     tophat = cv2.morphologyEx(gray, cv2.MORPH_TOPHAT, cv2.getStructuringElement(cv2.MORPH_CROSS, (35,35)))
@@ -22,7 +22,7 @@ def run_regionprops(image : np.array, lookup : dict, ocr_mask : np.array) -> np.
     properties = measure.regionprops(labels, cache=False)
     tick_points = []
     for prop in properties:
-        if prop.area > 200:
+        if prop.area > area_thresh:
             points = prop.coords
             contour = np.hstack((points[:,1].reshape(-1,1), points[:,0].reshape(-1,1)))
 
@@ -31,7 +31,7 @@ def run_regionprops(image : np.array, lookup : dict, ocr_mask : np.array) -> np.
             box = cv2.boxPoints(rect)
             box = np.int0(box)  
 
-            if prop.area / cv2.contourArea(box) > 0.8:
+            if prop.area / cv2.contourArea(box) > ratio_thresh:
                 cv2.drawContours(image, [box], -1, (0,255,0), 2)
                 tick_points.append((x,y))
     
@@ -42,7 +42,8 @@ def run_regionprops(image : np.array, lookup : dict, ocr_mask : np.array) -> np.
 def pair_numbers_with_ticks(good_contours : np.array, lookup : dict, image_center : tuple) -> dict:
     """
     Pair the number with the closest larger tick --> Based on euclidean distance criterion. Another criterion is that the tick 
-    mark cannot be closer to the center of the image than the number --> Just to make the pairing more robust
+    mark cannot be closer to the center of the image than the number --> Just to make the pairing more robust. Returns the sorted
+    dictionary with minimum to maximum number value. 
     """
     pairs = {}
     for number, obj in lookup.items():
