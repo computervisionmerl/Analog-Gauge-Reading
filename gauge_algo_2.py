@@ -88,7 +88,7 @@ class Gauge(object):
         dist = list(dist.values())[0:2]
         print("Range = ("+str(dist[0][1].number)+","+str(dist[1][1].number)+")")
         self.val = self._calculate_gauge_value(tip, dist, visualize)
-        print("Gauge Value = ", val)
+        print("Gauge Value = ", self.val)
 
         print("Time elapsed = {:4.6f}s".format(time.time() - start))
         if visualize:
@@ -191,7 +191,7 @@ class Gauge(object):
         cv2.imshow("image", image)
         cv2.waitKey(0)
 
-def main():
+def main(idx : int):
     gauge = Gauge()
 
     if idx == 0: ## OCR giving only 1 number
