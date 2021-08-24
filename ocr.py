@@ -31,7 +31,7 @@ class Ocr(object):
         self.mask = np.ones((1,1), dtype=np.uint8) * 255
 
     @staticmethod
-    def _pre_processing(image : np.array):
+    def _pre_processing(image : np.array) -> np.ndarray:
         gray = cv2.cvtColor(image, cv2.COLOR_RGB2GRAY)
 
         if gray.std() < 70: # or gray.std() < 35:
@@ -85,7 +85,7 @@ class Ocr(object):
 
         return; 
           
-    def _visualize(self, image : np.array):
+    def _visualize(self, image : np.array) -> None:
         for text, obj in self.lookup.items():
             (tl, tr, br, bl) = obj.box
             try:
