@@ -82,7 +82,7 @@ class Gauge(object):
             plt.plot([c[0] for c in ticks], [c[1] for c in ticks], 'b+', markersize=15)
 
         dist = dict(sorted(dist.items()))
-        dist = list(dist.items())[0:2]
+        dist = list(dist.values())[0:2]
         print("Range = ("+str(dist[0][1].number)+","+str(dist[1][1].number)+")")
         self.val = self._calculate_gauge_value(tip, dist, visualize)
         print("Gauge Value = ", val)
@@ -94,11 +94,11 @@ class Gauge(object):
 
     def _calculate_gauge_value(self, tip : tuple, dist : list, visualize : bool = True) -> float:
         ## Normalize all the coordinates to [0,1]
-        x1 = dist[0][1].tick_centroid[0] / self.norm_x
+        x1 = dist[0].tick_centroid[0] / self.norm_x
         x2 = tip[0] / self.norm_x
-        x3 = dist[1][1].tick_centroid[0] / self.norm_x
-        x_fit = [dist[0][1].tick_centroid[0] / self.norm_x, tip[0]/self.norm_x, dist[1][1].tick_centroid[0]/self.norm_x]
-        y_fit = [dist[0][1].tick_centroid[1] / self.norm_y, tip[1]/self.norm_y, dist[1][1].tick_centroid[1]/self.norm_y]
+        x3 = dist[1].tick_centroid[0] / self.norm_x
+        x_fit = [dist[0].tick_centroid[0] / self.norm_x, tip[0]/self.norm_x, dist[1].tick_centroid[0]/self.norm_x]
+        y_fit = [dist[0].tick_centroid[1] / self.norm_y, tip[1]/self.norm_y, dist[1].tick_centroid[1]/self.norm_y]
         curve = np.poly1d(fit_curve(np.array(x_fit), np.array(y_fit)))
         
         if visualize:
@@ -107,7 +107,7 @@ class Gauge(object):
           plt.plot(x_plot*self.norm_x, y_plot*self.norm_y, 'blue', linewidth=2)    
 
         reference = get_arc_length(min(x1,x3), max(x1, x3), curve); print("Reference = ", reference)
-        calibration = abs(dist[1][1].number - dist[0][1].number)
+        calibration = abs(dist[1].number - dist[0].number)
         ## Get needle swing (clockwise / anticlockwise) --> Needs little more thought, going wrong sometimes
         if x1 < x3:
             needle_swing = "clockwise"
@@ -117,28 +117,28 @@ class Gauge(object):
         ## Get whether the needle is in between or to the right or left of the range
         if (x2 - x1 > 0 and x2 - x3 < 0) or (x2 - x1 < 0 and x2 - x3 > 0):
             ## Needle is in range of the 2 detected numbers
-            d1 = euclidean_dist(tip, dist[0][1].tick_centroid)
-            d2 = euclidean_dist(tip, dist[1][1].tick_centroid)
+            d1 = euclidean_dist(tip, dist[0].tick_centroid)
+            d2 = euclidean_dist(tip, dist[1].tick_centroid)
             if d1 <= d2:
                 distance = get_arc_length(min(x1,x2), max(x1, x2), curve)
                 direction = "right"
-                nearest_num = dist[0][1].number
+                nearest_num = dist[0].number
             else:
                 distance = get_arc_length(min(x2,x3), max(x2, x3), curve)
                 direction = "left"
-                nearest_num = dist[1][1].number
+                nearest_num = dist[1].number
 
         else:
             ## Needle is outside the range of the 2 closest detected numbers
             if (x2 - x1 > 0 and x2 - x3 > 0):
                 distance = get_arc_length(x2, max(x1,x3), curve)
                 direction = "right"
-                nearest_num = dist[1][1].number
+                nearest_num = dist[1].number
             
             elif (x2 - x1 < 0 and x2 - x3 < 0):
                 distance = get_arc_length(x2, min(x1,x3), curve)
                 direction = "left"
-                nearest_num = dist[0][1].number
+                nearest_num = dist[0].number
             
             else:
                 raise DirectionError("Tip should either be in range; right or left of it !")
