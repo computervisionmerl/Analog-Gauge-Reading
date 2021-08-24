@@ -158,7 +158,7 @@ class Gauge(object):
         cv2.imshow("image", image)
         cv2.waitKey(0)
 
-def main():    
+def main(idx : int):    
     gauge = Gauge()
 
     if idx == 0: ## OCR giving only 1 number
