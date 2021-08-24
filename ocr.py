@@ -34,7 +34,7 @@ class Ocr(object):
     def _pre_processing(image : np.array) -> np.ndarray:
         gray = cv2.cvtColor(image, cv2.COLOR_RGB2GRAY)
 
-        if gray.std() < 70: # or gray.std() < 35:
+        if gray.std() < 51:
             gray = cv2.equalizeHist(gray)
         blur = cv2.GaussianBlur(gray, (5,5), 5)
 
