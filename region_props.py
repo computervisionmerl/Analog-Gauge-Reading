@@ -4,6 +4,11 @@ from skimage import measure
 from helper import *
 
 def run_regionprops(image : np.array, lookup : dict, ocr_mask : np.array) -> np.ndarray:
+    """
+    Compute properties of disconnected regions --> bbox, centroid, min enclosing rectangle, pixel area of region, etc.
+    Filters out all the non rectangle areas and again passes only those ones which are above a certain pixel area. This
+    is to ensure that only major tick marks are selected
+    """
     gray = cv2.cvtColor(image, cv2.COLOR_RGB2GRAY)
     if gray.std() > 73: # or gray.std() < 35:
         gray = cv2.equalizeHist(gray)
@@ -15,7 +20,7 @@ def run_regionprops(image : np.array, lookup : dict, ocr_mask : np.array) -> np.
    
     labels = measure.label(bw_img, connectivity=2)
     properties = measure.regionprops(labels, cache=False)
-    ellipse_points = []
+    tick_points = []
     for prop in properties:
         if prop.area > 200:
             points = prop.coords
@@ -28,13 +33,17 @@ def run_regionprops(image : np.array, lookup : dict, ocr_mask : np.array) -> np.
 
             if prop.area / cv2.contourArea(box) > 0.8:
                 cv2.drawContours(image, [box], -1, (0,255,0), 2)
-                ellipse_points.append((x,y))
+                tick_points.append((x,y))
     
     pairs = pair_numbers_with_ticks(ellipse_points, lookup, (gray.shape[0]//2, gray.shape[1]//2))
-    return ellipse_points, pairs
+    return tick_points, pairs
 
 
 def pair_numbers_with_ticks(good_contours : np.array, lookup : dict, image_center : tuple) -> dict:
+    """
+    Pair the number with the closest larger tick --> Based on euclidean distance criterion. Another criterion is that the tick 
+    mark cannot be closer to the center of the image than the number --> Just to make the pairing more robust
+    """
     pairs = {}
     for number, obj in lookup.items():
         (tl, _, br, _) = obj.box
