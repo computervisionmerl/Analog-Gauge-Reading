@@ -194,38 +194,50 @@ class Gauge(object):
 def main():
     gauge = Gauge()
 
-    #image = cv2.resize(cv2.imread("ptz_gauge_images/qualitrol_negative_gauge.jpg"),(800,800),cv2.INTER_CUBIC)
-    #gauge._read_gauge(image, True, "white")
+    if idx == 0: ## OCR giving only 1 number
+        image = cv2.resize(cv2.imread("ptz_gauge_images/qualitrol_negative_gauge.jpg"),(800,800),cv2.INTER_CUBIC)
+        gauge._read_gauge(image, True, "white")
 
-    #image = cv2.resize(cv2.imread("ptz_gauge_images/qualitrol_transformer_gauge.jpg"),(800,800),cv2.INTER_CUBIC)
-    #gauge._read_gauge(image, True, "white")
+    if idx == 1: ## Not sure why calculation is off
+        image = cv2.resize(cv2.imread("ptz_gauge_images/qualitrol_transformer_gauge.jpg"),(800,800),cv2.INTER_CUBIC)
+        gauge._read_gauge(image, True, "white")
 
-    #image = cv2.resize(cv2.imread("ptz_gauge_images/spot_ptz_gauge.jpg"),(800,800),cv2.INTER_CUBIC)
-    #gauge._read_gauge(image, True, "red")
+    elif idx == 2:
+        image = cv2.resize(cv2.imread("ptz_gauge_images/spot_ptz_gauge.jpg"),(800,800),cv2.INTER_CUBIC)
+        gauge._read_gauge(image, True, "red")
 
-    #image = cv2.resize(cv2.imread("ptz_gauge_images/spot_ptz_liquidsmall_gauge.jpg"),(800,800),cv2.INTER_CUBIC)
-    #gauge._read_gauge(image, True, "white")
+    elif idx == 3:
+        image = cv2.resize(cv2.imread("ptz_gauge_images/spot_ptz_liquidsmall_gauge.jpg"),(800,800),cv2.INTER_CUBIC)
+        gauge._read_gauge(image, True, "white")
 
-    #image = cv2.resize(cv2.imread("ptz_gauge_images/spot_ptz_gaspressure_gauge.jpg"),(800,800),cv2.INTER_CUBIC)
-    #gauge._read_gauge(image, True, "white")
+    elif idx == 4: ## Needle polynomial isn't estimated correctly (need to find out)
+        image = cv2.resize(cv2.imread("ptz_gauge_images/spot_ptz_gaspressure_gauge.jpg"),(800,800),cv2.INTER_CUBIC)
+        gauge._read_gauge(image, True, "white")
 
-    #image = cv2.resize(cv2.imread("ptz_gauge_images/spot_ptz_gasvolume_gauge.jpg"),(800,800),cv2.INTER_CUBIC)
-    #gauge._read_gauge(image, True, "white")
+    elif idx == 5: ## Distance to tick mark = 0.0
+        image = cv2.resize(cv2.imread("ptz_gauge_images/spot_ptz_gasvolume_gauge.jpg"),(800,800),cv2.INTER_CUBIC)
+        gauge._read_gauge(image, True, "white")
 
-    #image = cv2.resize(cv2.imread("ptz_gauge_images/spot_ptz_liquidtemp_gauge.jpg"),(800,800),cv2.INTER_CUBIC)
-    #gauge._read_gauge(image, True, "white")
+    elif idx == 6:
+        image = cv2.resize(cv2.imread("ptz_gauge_images/spot_ptz_liquidtemp_gauge.jpg"),(800,800),cv2.INTER_CUBIC)
+        gauge._read_gauge(image, True, "white")
 
-    #image = cv2.resize(cv2.imread("ptz_gauge_images/thyoda_actual_gauge.jpg"),(800,800),cv2.INTER_CUBIC)
-    #gauge._read_gauge(image, True, "red")
+    elif idx == 7:
+        image = cv2.resize(cv2.imread("ptz_gauge_images/thyoda_actual_gauge.jpg"),(800,800),cv2.INTER_CUBIC)
+        gauge._read_gauge(image, True, "red")
+        
+    elif idx == 8:
+        image = cv2.resize(cv2.imread("substation_images/spot_ptz_temp_gauge.png"),(800,800),cv2.INTER_CUBIC)
+        gauge._read_gauge(image, True, "red")
     
+    elif idx == 9:
+        image = cv2.resize(cv2.imread("substation_images/spot_ptz_gasvolume_gauge.png"),(800,800),cv2.INTER_CUBIC)
+        gauge._read_gauge(image, True, "red")
 
-    #image = cv2.resize(cv2.imread("substation_images/spot_ptz_temp_gauge.png"),(800,800),cv2.INTER_CUBIC)
-    #gauge._read_gauge(image, True, "red")
-    
-    #image = cv2.resize(cv2.imread("substation_images/spot_ptz_gasvolume_gauge.png"),(800,800),cv2.INTER_CUBIC)
-    #gauge._read_gauge(image, True, "red")
+    else:
+        print("Enter a valid idx value")
 
     return;
 
 if __name__ == "__main__":
-    main()
+    main(2)
