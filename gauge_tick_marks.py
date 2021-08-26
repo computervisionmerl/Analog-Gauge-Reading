@@ -1,11 +1,8 @@
-from operator import ne
 import time
 import numpy as np
 import cv2
 import matplotlib.pyplot as plt
 from dataclasses import dataclass
-
-from numpy.linalg.linalg import eig
 
 from helper import *
 from needle import Needle
