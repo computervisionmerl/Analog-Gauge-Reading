@@ -16,6 +16,11 @@ class Needle(object):
 
     @staticmethod
     def _pre_processing(image : np.array) -> np.array:
+        """
+        White --> Contrast enhancement + Thresholding + Morphological transforms
+        Black --> Morphological transforms + Thresholding
+        Red --> HSV conversion + Red Color Masking + Morphological transforms
+        """
         ## For white needle
         gray = cv2.cvtColor(image, cv2.COLOR_RGB2GRAY)
         if gray.std() > 70 or gray.std() < 35: gray = cv2.equalizeHist(gray)
@@ -39,6 +44,11 @@ class Needle(object):
         return hat_white, hat_red, hat_black
 
     def _isolate_needle(self, hat_white : np.array, hat_red : np.array = np.array([]), color : string = "white") -> None:
+        """
+        Isolates the needle depending on the parameter "color". Each of the needles demands unique
+        masking for efficient detection. Based on the color, we can detect the needle using efficient
+        pre-processing. The longest hough line is assumed to be the needle (true in most cases)
+        """
         if len(hat_white.shape) > 2 or not hat_red.size:
             hat_white, hat_red, hat_black = self._pre_processing(hat_white)
         

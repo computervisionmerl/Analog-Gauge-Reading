@@ -3,7 +3,7 @@ import numpy as np
 from skimage import measure
 from helper import *
 
-def run_regionprops(image : np.array, lookup : dict, ocr_mask : np.array, area_thresh : int = 200, ratio_thresh : float = 0.8) -> np.ndarray:
+def run_regionprops(image : np.array, area_thresh : int = 200, ratio_thresh : float = 0.8) -> np.ndarray:
     """
     Compute properties of disconnected regions --> bbox, centroid, min enclosing rectangle, pixel area of region, etc.
     Filters out all the non rectangle areas and again passes only those ones which are above a certain pixel area. This
@@ -35,8 +35,7 @@ def run_regionprops(image : np.array, lookup : dict, ocr_mask : np.array, area_t
                 cv2.drawContours(image, [box], -1, (0,255,0), 2)
                 tick_points.append((x,y))
     
-    pairs = pair_numbers_with_ticks(ellipse_points, lookup, (gray.shape[0]//2, gray.shape[1]//2))
-    return tick_points, pairs
+    return tick_points
 
 
 def pair_numbers_with_ticks(good_contours : np.array, lookup : dict, image_center : tuple) -> dict:

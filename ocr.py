@@ -30,9 +30,11 @@ class Ocr(object):
 
     @staticmethod
     def _pre_processing(image : np.array) -> np.ndarray:
+        """
+        Image denoising + contrast enhahcement + Morphological transformation
+        """
         gray = cv2.cvtColor(image, cv2.COLOR_RGB2GRAY)
         if gray.std() > 66 or gray.std() < 60: gray = cv2.equalizeHist(gray)
-        #print(gray.std())
         blur = cv2.GaussianBlur(gray, (5,5), 5)
 
         if calculate_brightness(image) > 0.52:
@@ -42,6 +44,12 @@ class Ocr(object):
         return hat
 
     def _run_ocr(self, hat : np.array) -> None:
+        """
+        Recognizes the numbers on the backplate of the gauge, populates the 
+        lookup dictionary for further filtering. Keeps track of whether the 
+        number has already been recognized, if yes, take the one with higher 
+        confidence of detection
+        """ 
         if len(hat.shape) > 2:
             hat = Ocr._pre_processing(hat)
 
@@ -91,6 +99,11 @@ class Ocr(object):
         return;         
     
     def _filter_values(self, key_list : list) -> list:
+        """
+        Filters the OCR values based on the most common scale of the numbers
+        Ex :- if the numbers are [100,200,400,500,600,5,8] ==> The most common
+        scale is 100 ==> Retained values are [100,200,400,500,600]
+        """
         diff_dict = dict()
         for i in range(len(key_list) - 1):
             diff = abs(key_list[i] - key_list[i+1])

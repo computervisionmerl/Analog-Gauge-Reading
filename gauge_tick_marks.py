@@ -83,8 +83,9 @@ class Gauge(object):
             cv2.circle(image.copy(), tip, 3, (0,255,0), -1)
         
         ## Get regionprops and extract tick mark locations
-        ticks, pairs = run_regionprops(image.copy(), self.ocr.lookup, self.ocr.mask, area_thresh=100, ratio_thresh=0.8)
         dist = {}
+        ticks = run_regionprops(image.copy(), self.area_thresh, self.ratio_thresh)
+        pairs = pair_numbers_with_ticks(self.ocr.lookup, center)
         for number, (tick_centroid, bb_centroid) in pairs.items():
             dist[euclidean_dist(tip, bb_centroid)] = region(number, tick_centroid, bb_centroid)
         
@@ -108,6 +109,11 @@ class Gauge(object):
             self._visualize(image)
 
     def _calculate_gauge_value(self, tip : tuple, dist : list) -> float:
+        """
+        Calculate the gauge value based on the x positions of the needle tip and the 2 closest
+        tick marks. Determines whether the needle is in between these identified tick marks or
+        not (left or right based on detected OCR numbers)
+        """
         x1 = dist[0].tick_centroid[0] / self.norm_x
         x2 = tip[0] / self.norm_x
         x3 = dist[1].tick_centroid[0] / self.norm_x

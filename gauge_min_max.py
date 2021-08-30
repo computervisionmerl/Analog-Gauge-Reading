@@ -5,7 +5,6 @@ import matplotlib.pyplot as plt
 
 from helper import *
 from region_props import *
-from ocr import Ocr, ocr_result
 from gauge_tick_marks import Gauge
 
 class Gauge_minmax(Gauge):
