@@ -24,7 +24,7 @@
 ### OCR analysis
 https://varunharitsa.atlassian.net/wiki/spaces/OR/overview
 
-### Updates 
+### Updates --> Gauges with tick marks
 
 1) Image acquisition and pre-processing 
    <br /> a. Ideally need some classification to recognize the type of gauge (analog/digital, tick marks present(y/n), etc.)
@@ -44,3 +44,6 @@ https://varunharitsa.atlassian.net/wiki/spaces/OR/overview
    <br /> b. Find the point of interesection of line estimating the needle with this curve
    <br /> c. Calculate arc_length along the curve between needle and nearest major tick mark
    <br /> d. We can compute the reading based on prior calibration of distance v/s value along this polynomial (interpolation)
+   
+## Update --> Min-Max and High-Low gauges
+We don't need to run the OCR. If we have the tick marks representing these boundaries, we can see where the needle is with respect to these boundaries and check whether it reads normal or there is something worrysome. 
