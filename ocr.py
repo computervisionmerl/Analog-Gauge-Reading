@@ -1,10 +1,10 @@
+from typing import Tuple
 import numpy as np
 import cv2
 import easyocr
 from dataclasses import dataclass
 from helper import *
 import operator
-from typing import Tuple
 
 import warnings
 warnings.filterwarnings("ignore")
