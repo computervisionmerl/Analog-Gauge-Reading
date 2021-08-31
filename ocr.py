@@ -1,10 +1,10 @@
-from codecs import lookup
-import operator
 import numpy as np
 import cv2
 import easyocr
 from dataclasses import dataclass
 from helper import *
+import operator
+from typing import Tuple
 
 import warnings
 warnings.filterwarnings("ignore")
@@ -12,54 +12,83 @@ warnings.filterwarnings("ignore")
 @dataclass
 class ocr_result:
     box: tuple
-    prob: float
+    conf: float
 
 class Ocr(object):
     def __init__(self) -> None:
         super().__init__()
-        self.reader = easyocr.Reader(['en'], True) 
+        self.reader = easyocr.Reader(['en'], gpu=True, verbose=False) 
         self.lookup = dict()
-        self.number_list = list()
-        self.prob = 0.95
         self.reset()
 
-    def reset(self):
+    def reset(self) -> None:
+        self.conf = 0.95
         self.lookup.clear()
-        self.number_list.clear()
-        self.mask = np.ones((1,1), dtype=np.uint8) * 255
 
     @staticmethod
     def _pre_processing(image : np.array) -> np.ndarray:
-        """
-        Image denoising + contrast enhahcement + Morphological transformation
-        """
         gray = cv2.cvtColor(image, cv2.COLOR_RGB2GRAY)
-        if gray.std() > 66 or gray.std() < 60: gray = cv2.equalizeHist(gray)
+        if gray.std() > 66 or gray.std() < 60: 
+            gray = cv2.equalizeHist(gray)
+        
         blur = cv2.GaussianBlur(gray, (5,5), 5)
-
         if calculate_brightness(image) > 0.52:
             hat = cv2.morphologyEx(blur, cv2.MORPH_BLACKHAT, cv2.getStructuringElement(cv2.MORPH_RECT, (35,35)))
         else:
             hat = cv2.morphologyEx(blur, cv2.MORPH_TOPHAT, cv2.getStructuringElement(cv2.MORPH_RECT, (35,35)))
+
         return hat
 
-    def _run_ocr(self, hat : np.array) -> None:
-        """
-        Recognizes the numbers on the backplate of the gauge, populates the 
-        lookup dictionary for further filtering. Keeps track of whether the 
-        number has already been recognized, if yes, take the one with higher 
-        confidence of detection
-        """ 
-        if len(hat.shape) > 2:
-            hat = Ocr._pre_processing(hat)
+    @staticmethod
+    def _classify(lookup : dict) -> Tuple[dict, str]:
+        gauge_type = ""
+        lookup_clone = lookup.copy(); lookup.clear()
+        keys = lookup_clone.keys()
+        if "PUMP" in keys or "ON" in keys or "OFF" in keys:
+            gauge_type = "pump-on-off"
+            for key in ["PUMP", "ON", "OFF"]:
+                try:
+                    lookup[key] = lookup_clone[key]
+                except KeyError:
+                    continue
 
+        elif "MIN" in keys or "MAX" in keys:
+            gauge_type = "min-max"
+            for key in ["MIN", "MAX"]:
+                try:
+                    lookup[key] = lookup_clone[key]
+                except KeyError:
+                    continue
+
+        elif "HIGH" in keys or "LOW" in keys:
+            gauge_type = "high-low"
+            for key in ["HIGH", "LOW"]:
+                try:
+                    lookup[key] = lookup_clone[key]
+                except KeyError:
+                    continue
+
+        elif "HI" in keys or "LO" in keys:
+            gauge_type = "hi-lo"
+            for key in ["HI", "LO"]:
+                try:
+                    lookup[key] = lookup_clone[key]
+                except KeyError:
+                    continue
+
+        else:
+            gauge_type = "numeric"
+            lookup = lookup_clone.copy()
+        
+        return lookup, gauge_type
+
+    def _construct_initial_lookup(self, hat : np.array) -> list:
         boxes = self.reader.readtext(hat)
         key_list = []
-        self.mask = np.ones(hat.shape, dtype=np.uint8) * 255
         idx = 0
         if boxes:
-            for box, text, prob in boxes:
-                if prob > self.prob:
+            for box, text, conf in boxes:
+                if conf > self.conf:
                     (tl, tr, br, bl) = box
                     tl = (int(tl[0]), int(tl[1]))
                     tr = (int(tr[0]), int(tr[1]))
@@ -67,43 +96,32 @@ class Ocr(object):
                     br = (int(br[0]), int(br[1]))
 
                     try:
-                        if text in self.lookup and prob > self.lookup[text].prob:
-                            self.lookup[text] = ocr_result((tl, tr, br, bl), prob)
+                        ## Recognized text is found with a higher confidence in the dictionary
+                        if text in self.lookup and conf > self.lookup[text].conf:
+                            self.lookup[text] = ocr_result((tl, tr, br, bl), conf)
 
-                        elif text in self.lookup and prob < self.lookup[text].prob:
-                            self.lookup[text+"_"+str(idx)] = ocr_result((tl, tr, br, bl), prob)
+                        ## Recognized text is found with a lower confidence in the dictionary
+                        elif text in self.lookup and conf < self.lookup[text].conf:
+                            self.lookup[text+"_"+str(idx)] = ocr_result((tl, tr, br, bl), conf)
                             idx+=1
 
+                        ## Recognized text not found in the dictionary
                         else:
-                            self.lookup[text] = ocr_result((tl, tr, br, bl), prob)
-                            self.number_list.append(int(text))
-
-                        self.mask[tl[1]:bl[1], tl[0]:tr[0]] = 0
-                        if int(text) not in key_list:
-                            key_list.append(int(text))
+                            self.lookup[text] = ocr_result((tl, tr, br, bl), conf)
 
                     except ValueError:
                         continue
 
-            self.number_list.sort()
+                    if text.isnumeric():
+                        if int(text) not in key_list:
+                            key_list.append(int(text))
 
         else:
-            raise ValueError("No numbers detected by the OCR !!") 
-
-        key_list.sort()
-        good_numbers = self._filter_values(key_list)
-        lookup_clone = self.lookup.copy(); self.lookup.clear()
-        for num in good_numbers:
-            self.lookup[str(num)] = lookup_clone[str(num)]
-        
-        return;         
+            raise ValueError("No numbers detected by the OCR !!")
+            
+        return key_list       
     
     def _filter_values(self, key_list : list) -> list:
-        """
-        Filters the OCR values based on the most common scale of the numbers
-        Ex :- if the numbers are [100,200,400,500,600,5,8] ==> The most common
-        scale is 100 ==> Retained values are [100,200,400,500,600]
-        """
         diff_dict = dict()
         for i in range(len(key_list) - 1):
             diff = abs(key_list[i] - key_list[i+1])
@@ -127,6 +145,24 @@ class Ocr(object):
             return []
 
         return good_numbers
+
+    def _run_ocr(self, hat : np.array) -> None:
+        if len(hat.shape) > 2:
+            hat = Ocr._pre_processing(hat)
+
+        key_list = self._construct_initial_lookup(hat) 
+        lookup, gauge_type = Ocr._classify(self.lookup.copy())
+
+        if gauge_type == "numeric":
+            good_numbers = self._filter_values(key_list)
+            lookup_clone = self.lookup.copy(); self.lookup.clear()
+            for num in good_numbers:
+                self.lookup[str(num)] = lookup_clone[str(num)]
+
+        else:
+            self.lookup = lookup
+        
+        return;  
 
     def _visualize(self, image : np.array) -> None:
         for text, obj in self.lookup.items():
@@ -153,15 +189,15 @@ def main():
     image = cv2.resize(cv2.imread("ptz_gauge_images/spot_ptz_gauge.jpg"),(800,800),cv2.INTER_CUBIC)
     image = cv2.resize(cv2.imread("ptz_gauge_images/spot_ptz_liquidsmall_gauge.jpg"),(800,800),cv2.INTER_CUBIC)
     image = cv2.resize(cv2.imread("ptz_gauge_images/spot_ptz_gaspressure_gauge.jpg"),(800,800),cv2.INTER_CUBIC)
-    #image = cv2.resize(cv2.imread("ptz_gauge_images/spot_ptz_gasvolume_gauge.jpg"),(800,800),cv2.INTER_CUBIC) # 0.65 --> ratio
+    image = cv2.resize(cv2.imread("ptz_gauge_images/spot_ptz_gasvolume_gauge.jpg"),(800,800),cv2.INTER_CUBIC)
     #image = cv2.resize(cv2.imread("ptz_gauge_images/spot_ptz_liquidtemp_gauge.jpg"),(800,800),cv2.INTER_CUBIC)
     #image = cv2.resize(cv2.imread("ptz_gauge_images/thyoda_actual_gauge.jpg"),(800,800),cv2.INTER_CUBIC)
     
     #image = cv2.resize(cv2.imread("substation_images/spot_ptz_temp_gauge.png"),(800,800),cv2.INTER_CUBIC)
     #image = cv2.resize(cv2.imread("substation_images/spot_ptz_gasvolume_gauge.png"),(800,800),cv2.INTER_CUBIC)
     #image = cv2.resize(cv2.imread("substation_images/spot_ptz_breaker_gauge.png"),(800,800),cv2.INTER_CUBIC)
-    #image = cv2.resize(cv2.imread("substation_images/qualitrol_temperature_gauge.jpg"),(800,800),cv2.INTER_CUBIC)
-    #image = cv2.resize(cv2.imread("substation_images/meppi_pressure_gauge.png"),(800,800),cv2.INTER_CUBIC)
+    image = cv2.resize(cv2.imread("substation_images/qualitrol_temperature_gauge.jpg"),(800,800),cv2.INTER_CUBIC)
+    image = cv2.resize(cv2.imread("substation_images/meppi_pressure_gauge.png"),(800,800),cv2.INTER_CUBIC)
     #image = cv2.resize(cv2.imread("substation_images/meppi_kpa_pressure_gauge.png"),(800,800),cv2.INTER_CUBIC)
 
     ocr = Ocr()

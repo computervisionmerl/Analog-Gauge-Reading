@@ -3,21 +3,32 @@ import numpy as np
 from skimage import measure
 from helper import *
 
+def regionprops_preprocessing(image : np.array) -> np.array:
+    """
+    Preprocessing to isolate tick marks from the background. Returns a binary image which is 
+    required to compute regionprops and extract out only rectangular regions (tick marks)
+    """
+    gray = cv2.cvtColor(image, cv2.COLOR_RGB2GRAY)
+    if gray.std() > 70 or gray.std() < 35:
+        gray = cv2.equalizeHist(gray)
+    if calculate_brightness(image) > 0.52:
+        hat = cv2.morphologyEx(gray, cv2.MORPH_BLACKHAT, cv2.getStructuringElement(cv2.MORPH_RECT, (35,35)))
+    else:
+        hat = cv2.morphologyEx(gray, cv2.MORPH_TOPHAT, cv2.getStructuringElement(cv2.MORPH_RECT, (35,35)))
+
+    opening = cv2.morphologyEx(hat, cv2.MORPH_OPEN, cv2.getStructuringElement(cv2.MORPH_RECT, (5,5)))
+    closing = cv2.morphologyEx(opening, cv2.MORPH_CLOSE, cv2.getStructuringElement(cv2.MORPH_RECT, (5,5)))
+    thresh = cv2.threshold(closing, 0, 255, cv2.THRESH_BINARY+cv2.THRESH_OTSU)[1]
+
+    return thresh
+
 def run_regionprops(image : np.array, area_thresh : int = 200, ratio_thresh : float = 0.8) -> np.ndarray:
     """
     Compute properties of disconnected regions --> bbox, centroid, min enclosing rectangle, pixel area of region, etc.
     Filters out all the non rectangle areas and again passes only those ones which are above a certain pixel area. This
     is to ensure that only major tick marks are selected
     """
-    gray = cv2.cvtColor(image, cv2.COLOR_RGB2GRAY)
-    if gray.std() > 73 or gray.std() < 35:
-        gray = cv2.equalizeHist(gray)
-
-    tophat = cv2.morphologyEx(gray, cv2.MORPH_TOPHAT, cv2.getStructuringElement(cv2.MORPH_CROSS, (35,35)))
-    opening = cv2.morphologyEx(tophat, cv2.MORPH_OPEN, cv2.getStructuringElement(cv2.MORPH_RECT, (5,5)))
-    closing = cv2.morphologyEx(opening, cv2.MORPH_CLOSE, cv2.getStructuringElement(cv2.MORPH_RECT, (5,5)))
-    bw_img = cv2.threshold(closing, 0, 255, cv2.THRESH_BINARY+cv2.THRESH_OTSU)[1]
-   
+    bw_img = regionprops_preprocessing(image.copy())
     labels = measure.label(bw_img, connectivity=2)
     properties = measure.regionprops(labels, cache=False)
     tick_points = []
@@ -35,8 +46,7 @@ def run_regionprops(image : np.array, area_thresh : int = 200, ratio_thresh : fl
                 cv2.drawContours(image, [box], -1, (0,255,0), 2)
                 tick_points.append((x,y))
     
-    return tick_points
-
+    return tick_points, labels
 
 def pair_numbers_with_ticks(good_contours : np.array, lookup : dict, image_center : tuple) -> dict:
     """
