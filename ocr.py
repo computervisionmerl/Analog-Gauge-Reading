@@ -96,11 +96,7 @@ class Ocr(object):
         Fills the lookup dictionary with initial predictions. These predictions have to be filtered and corrected based
         on the type of the gauge, scale of calibration, etc.
         """
-<<<<<<< HEAD
         boxes = self.reader.readtext(hat, allowlist="0123456789-PUMPOFNIAXHGLW")
-=======
-        boxes = self.reader.readtext(hat)
->>>>>>> 095c17e75bf8d46ceb9048d043e1506e1796a9fb
         key_list = []
         idx = 0
         if boxes:
