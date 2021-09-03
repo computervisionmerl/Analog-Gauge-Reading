@@ -12,6 +12,18 @@ def euclidean_dist(point1 : tuple, point2 : tuple) -> float:
     """
     return np.sqrt((point1[0] - point2[0])**2 + (point1[1] - point2[1])**2)
 
+def parabola (x, a, b, c):
+    """
+    Quadratic polynomial curve
+    """
+    return a*x**2 + b*x + c
+
+def linear(x, a, b):
+    """
+    Line fitting based on 2 point formula
+    """
+    return a*x + b 
+
 def calculate_brightness(image : np.array) -> float:
     """
     Checks whether the gauge has a black or white background depending on the image brightness
@@ -64,9 +76,9 @@ def get_arc_length(x1 : float, x2 : float, bestmodel : np.poly1d, n_steps : int 
 
     while curr_x <= x2:
         prev_x = curr_x
-        prev_y = np.polyval(bestmodel, prev_x)
+        prev_y = parabola(prev_x, *bestmodel)
         curr_x = curr_x + dx
-        curr_y = np.polyval(bestmodel, curr_x)
+        curr_y = parabola(curr_x, *bestmodel)
 
         x_start = prev_x; y_start = prev_y
         x_finish = curr_x; y_finish = curr_y

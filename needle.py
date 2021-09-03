@@ -1,7 +1,6 @@
 import numpy as np
 import cv2
 from helper import calculate_brightness, fit_line
-import string
 import matplotlib.pyplot as plt
 
 class Needle(object):
@@ -42,7 +41,7 @@ class Needle(object):
 
         return cv2.Canny(hat, 85, 255), cv2.threshold(hat_red, 0, 255, cv2.THRESH_BINARY+cv2.THRESH_OTSU)[1]
 
-    def _isolate_needle(self, hat_white : np.array, hat_red : np.array = np.array([]), color : string = "white") -> None:
+    def _isolate_needle(self, hat_white : np.array, hat_red : np.array = np.array([]), color : str = "white") -> None:
         """
         Isolates the needle depending on the parameter "color". Each of the needles demands unique
         masking for efficient detection. Based on the color, we can detect the needle using efficient

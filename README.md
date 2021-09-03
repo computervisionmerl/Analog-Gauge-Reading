@@ -40,10 +40,13 @@ https://varunharitsa.atlassian.net/wiki/spaces/OR/overview
    <br /> c. Pair the tick mark with the OCR number based on euclidean distance criterion
 
 4) Calculate the gauge value
-   <br /> a. Fit a quadratic curve along the centroids of these major tick marks (ones paired with numbers)
-   <br /> b. Find the point of interesection of line estimating the needle with this curve
-   <br /> c. Calculate arc_length along the curve between needle and nearest major tick mark
-   <br /> d. We can compute the reading based on prior calibration of distance v/s value along this polynomial (interpolation)
+   <br /> a. Fit a quadratic curve along 3 points (needle tip, 2 closest tick marks)
+   <br /> b. Calculate arc_length along the curve between needle and nearest major tick mark
+   <br /> c. Determine the direction of the needle from the closest tick mark, swing of the needle and calibration of the dial based on reference tick marks and numbers from OCR
+   <br /> d. Interpolate along the curve to find the gauge value
    
 ## Update --> Min-Max and High-Low gauges
-We don't need to run the OCR. If we have the tick marks representing these boundaries, we can see where the needle is with respect to these boundaries and check whether it reads normal or there is something worrysome. 
+1) OCR for classification
+2) Regionprops to identify the normal swing region
+3) Needle tip --> Whether or not the tip falls inside this region
+Since we often don't need numerical values for these gauges, it is typically easier to read such ones

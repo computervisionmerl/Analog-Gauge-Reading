@@ -1,10 +1,10 @@
-from typing import Tuple
 import numpy as np
 import cv2
 import easyocr
 from dataclasses import dataclass
 from helper import *
 import operator
+from typing import Tuple
 
 import warnings
 warnings.filterwarnings("ignore")
@@ -24,23 +24,32 @@ class Ocr(object):
     def reset(self) -> None:
         self.conf = 0.95
         self.lookup.clear()
+        self.kmorph = (35,35)
+        self.kblur = (5,5)
+        self.sigblur = 5
 
-    @staticmethod
-    def _pre_processing(image : np.array) -> np.ndarray:
+    def _pre_processing(self, image : np.array) -> np.ndarray:
+        """
+        Preprocessing = Image denoising + Contrast enhancement + Morphological transforms
+        """
         gray = cv2.cvtColor(image, cv2.COLOR_RGB2GRAY)
-        if gray.std() > 66 or gray.std() < 60: 
+        if gray.std() > 70 or gray.std() < 35: 
             gray = cv2.equalizeHist(gray)
         
-        blur = cv2.GaussianBlur(gray, (5,5), 5)
+        blur = cv2.GaussianBlur(gray, self.kblur, self.sigblur)
         if calculate_brightness(image) > 0.52:
-            hat = cv2.morphologyEx(blur, cv2.MORPH_BLACKHAT, cv2.getStructuringElement(cv2.MORPH_RECT, (35,35)))
+            hat = cv2.morphologyEx(blur, cv2.MORPH_BLACKHAT, cv2.getStructuringElement(cv2.MORPH_RECT, self.kmorph))
         else:
-            hat = cv2.morphologyEx(blur, cv2.MORPH_TOPHAT, cv2.getStructuringElement(cv2.MORPH_RECT, (35,35)))
+            hat = cv2.morphologyEx(blur, cv2.MORPH_TOPHAT, cv2.getStructuringElement(cv2.MORPH_RECT, self.kmorph))
 
         return hat
 
     @staticmethod
     def _classify(lookup : dict) -> Tuple[dict, str]:
+        """
+        Classifies based on the lookup dictionary constructed using the OCR results. If the gauge is not numeric, we are
+        not interested in anything other than a couple of points of interest from the OCR standpoint
+        """
         gauge_type = ""
         lookup_clone = lookup.copy(); lookup.clear()
         keys = lookup_clone.keys()
@@ -83,7 +92,11 @@ class Ocr(object):
         return lookup, gauge_type
 
     def _construct_initial_lookup(self, hat : np.array) -> list:
-        boxes = self.reader.readtext(hat)
+        """
+        Fills the lookup dictionary with initial predictions. These predictions have to be filtered and corrected based
+        on the type of the gauge, scale of calibration, etc.
+        """
+        boxes = self.reader.readtext(hat, allowlist="0123456789-PUMPOFNIAXHGLW")
         key_list = []
         idx = 0
         if boxes:
@@ -122,6 +135,11 @@ class Ocr(object):
         return key_list       
     
     def _filter_values(self, key_list : list) -> list:
+        """
+        Filters the values in a numeric type gauge based on the most common scale in the dial
+        Ex: - If the OCR detects the following numbers --> [0,5,8,100,200,400,500,600]
+              Most common scale = 100 ==> Retained numbers --> [0,100,200,400,500,600]
+        """
         diff_dict = dict()
         for i in range(len(key_list) - 1):
             diff = abs(key_list[i] - key_list[i+1])
@@ -136,6 +154,7 @@ class Ocr(object):
             for i in range(0, len(key_list)):
                 for j in range(i+1, len(key_list)):
                     curr_diff = key_list[i] - key_list[j] 
+                    ## If the scale is most common one or a multiple / factor --> Consider the number
                     if curr_diff == diff or curr_diff % diff == 0 or diff % curr_diff == 0:
                         if key_list[i] not in good_numbers:
                             good_numbers.append(key_list[i])
@@ -147,8 +166,12 @@ class Ocr(object):
         return good_numbers
 
     def _run_ocr(self, hat : np.array) -> None:
+        """
+        Runs OCR, classifies the gauge based on recognized text, cleans up the lookup dictionary to remove any falsely
+        recognized text and stores the dictionary as a class attribute
+        """
         if len(hat.shape) > 2:
-            hat = Ocr._pre_processing(hat)
+            hat = self._pre_processing(hat)
 
         key_list = self._construct_initial_lookup(hat) 
         lookup, gauge_type = Ocr._classify(self.lookup.copy())
