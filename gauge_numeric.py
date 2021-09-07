@@ -92,14 +92,14 @@ class Gauge_numeric(object):
             plt.plot([c[0] for c in ticks], [c[1] for c in ticks], 'b+', markersize=15)
            
             ## Plot the fitted curves (horizontal and vertical (if present))
-            if curve_x is not None:
+            if curve_x is not None and fit == "vertical":
                 x_plot = np.linspace(0,1,1000)
                 try:
                     y_plot = np.clip(parabola(x_plot, *curve_x), 0, 1)
                 except TypeError:
                     y_plot = np.clip(linear(x_plot, *curve_x), 0, 1)
                 plt.plot(x_plot * self.norm_x, y_plot * self.norm_x, label='curve_x')
-            if curve_y is not None:
+            if curve_y is not None and fit == "horizontal":
                 y_plot = np.linspace(0,1,1000)
                 x_plot = np.clip(parabola(y_plot, *curve_y), 0, 1)
                 plt.plot(x_plot * self.norm_x, y_plot * self.norm_y, label='curve_y')
