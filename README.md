@@ -3,7 +3,7 @@
 ## OCR analysis
 https://varunharitsa.atlassian.net/wiki/spaces/OR/overview
 
-## New algorithm 
+## Working algorithm
 
 #### Numerical gauges with tick marks
 1) OCR
