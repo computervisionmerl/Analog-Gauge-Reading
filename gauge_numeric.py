@@ -5,191 +5,36 @@ import matplotlib.pyplot as plt
 from dataclasses import dataclass
 from scipy.optimize import curve_fit
 
-from helper import *
-from needle import Needle
 from ocr import Ocr
-from region_props import Regionprops
-
-class DirectionError(Exception):
-    def __init__(self, *args: object) -> None:
-        super().__init__(*args)
+from regionprops import Regionprops
+from needle import Needle
+from helper import *
 
 @dataclass
-class region:
+class tick_distance_object:
     number : int
     tick_centroid : tuple
-    bb_centroid : tuple
+    number_centroid : tuple
 
 class Gauge_numeric(object):
-    def __init__(self, mode : str) -> None:
+    def __init__(self) -> None:
         super().__init__()
-        self.needle = Needle()
         self.ocr = Ocr()
         self.props = Regionprops()
-        self.val = None
-        self.params = [-0.1, 0.5, 1.2]
-        self.ratio_thresh = 0.85
-        self.area_thresh = 200
-        self.mode = mode
-
-    def reset(self) -> None:
-        self.needle.reset()
-        self.ocr.reset()
-        self.props.reset()
-        self.val = None
-        self.mode = "curve"
-
-    def _read_gauge(self, image : np.array, visualize : bool = True, needle = "white", fit : str = "vertical") -> None:
-        start = time.time()
-        ## Common parameters
-        center = (image.shape[0]//2, image.shape[1]//2)
-        self.norm_x = image.shape[0]; self.norm_y = image.shape[1]
-
-        ## Run OCR and build a lookup dictionary
-        self.ocr._run_ocr(image.copy())
-        if len(self.ocr.lookup) < 2:
-            print("Not enough values detected by OCR !!")
-            print("Need at least 2 OCR values")
-            return;
-
-        ## Get the equation of the line estimating the needle and the needle tip
-        self.needle._isolate_needle(image.copy(), color="white")
-        self.needle._isolate_needle(image.copy(), color="red")
-        if self.needle.line_white is None and self.needle.line_red is None:
-            print("Needle not found !")
-            return;
-        line, pt1, pt2 = self._get_needle_line_and_pts(needle)
-        tip = pt1 if euclidean_dist(pt1, center) > euclidean_dist(pt2, center) else pt2
-
-        ## Compute regionprops and extract tick mark locations (Rectangular regions)
-        dist = {}
-        ticks, _ = self.props._get_tick_marks(image.copy(), self.area_thresh, self.ratio_thresh)
-        pairs = self.props._pair_numbers_with_ticks(ticks, self.ocr.lookup, center)
-        for number, (tick_centroid, bb_centroid) in pairs.items():
-            dist[euclidean_dist(tip, bb_centroid)] = region(number, tick_centroid, bb_centroid)
-
-        ## Calculate gauge value using relative positions of the needle tip, 2 nearest tick marks,
-        ## and numbers associated with those ticks marks
-        dist = dict(sorted(dist.items()))
-        dist = list(dist.values())[0:2]
-        if not dist:
-            print("No tick marks identified near the needle tip")
-            return;
-
-        self.val, curve_x, curve_y = self._calculate_gauge_value(dist, tip, line, center, fit)
-        if self.val:
-            print("Gauge value = {:4.4f}".format(self.val))
-        print("Time taken = {:4.6f}s".format(time.time()-start))
+        self.needle = Needle()
+        self.pairs = {}
         self.reset()
 
-        if visualize:
-            plt.figure(figsize=(10,10))
-            plt.imshow(image)
-            
-            ## Plot the tick centroids along with the respective pair memebers joined by lines
-            for number, (tick_centroid, bb_centroid) in pairs.items():
-                plt.plot([tick_centroid[0], bb_centroid[0]], [tick_centroid[1], bb_centroid[1]], 'orange', linewidth=2)
-            plt.plot([c[0] for c in ticks], [c[1] for c in ticks], 'b+', markersize=15)
-           
-            ## Plot the fitted curves (horizontal and vertical (if present))
-            if curve_x is not None and fit == "vertical":
-                x_plot = np.linspace(0,1,1000)
-                try:
-                    y_plot = np.clip(parabola(x_plot, *curve_x), 0, 1)
-                except TypeError:
-                    y_plot = np.clip(linear(x_plot, *curve_x), 0, 1)
-                plt.plot(x_plot * self.norm_x, y_plot * self.norm_x, label='curve_x')
-            if curve_y is not None and fit == "horizontal":
-                y_plot = np.linspace(0,1,1000)
-                x_plot = np.clip(parabola(y_plot, *curve_y), 0, 1)
-                plt.plot(x_plot * self.norm_x, y_plot * self.norm_y, label='curve_y')
+    def reset(self):
+        self.val = None
+        self.pairs.clear()
+        self.ocr.reset()
+        self.props.reset()
+        self.params = [-0.1, 0.5, 1.2]
+        self.ratio_thresh = 0.95
+        self.area_thresh = 200
 
-            ## Plot the line estimating the needle in the gauge
-            x_plot = np.linspace(0,1,1000)
-            y_line = np.clip(np.polyval(line, x_plot), 0, 1)
-            plt.plot(x_plot * 800, y_line * 800, label='needle_line')
-            plt.legend(loc='lower right')
-            plt.show()
-
-    @staticmethod
-    def _get_needle_swing(center : tuple, dist : list) -> str:
-        """
-        Computes whether the swing of the needle is clockwise or anticlockwise based on
-        the number locations on the calibration dial.
-        If clockwise, the needle must go through quadrants in this order 3 -> 2 -> 1 -> 4
-        Else if the order is 4 -> 1 -> 2 -> 3, we can infer the swing is anticlockwise
-        """
-        x1, y1 = dist[0].tick_centroid
-        x2, y2 = dist[1].tick_centroid
-        q1 = find_quadrant((int(x1), int(y1)), center) 
-        q2 = find_quadrant((int(x2), int(y2)), center)
-
-        ## These dictionaries tell us the possible quadrants of the higher number based on the 
-        ## quadrant of the lower one for clockwise and anticlockwise swings for the needle
-        quad_dict_clockwise = {3 : [2,1,4], 2 : [1,4], 1 : [4]}
-        quad_dict_anticlockwise = {4 : [1,2,3], 1 : [2,3],  2 : [3]}
-
-        if q1 == q2:
-            if dist[0].number < dist[1].number:
-                ## q1 needs to be on the left 
-                if q1 == 1 or q1 == 2:
-                    if x1 < x2 :
-                        needle_swing = "clockwise"
-                    else :
-                        needle_swing = "anticlockwise"
-                
-                ## q1 needs to be to the right 
-                elif q1 == 3 or q1 == 4 :
-                    if x1 > x2 : 
-                        needle_swing = "clockwise"
-                    else:
-                        needle_swing = "anticlockwise"
-
-            else:
-                ## q1 needs to be on the right 
-                if q1 == 1 or q1 == 2:
-                    if x1 > x2 :
-                        needle_swing = "clockwise"
-                    else :
-                        needle_swing = "anticlockwise"
-                
-                ## q1 needs to be to the left 
-                elif q1 == 3 or q1 == 4 :
-                    if x1 < x2 : 
-                        needle_swing = "clockwise"
-                    else:
-                        needle_swing = "anticlockwise"
-        
-        elif q1 != q2:
-            if dist[0].number < dist[1].number:
-                try:
-                    if q2 in quad_dict_clockwise[q1]:
-                        needle_swing = "clockwise"
-                    else:
-                        needle_swing = None
-                
-                except KeyError: 
-                    if q2 in quad_dict_anticlockwise[q1]:
-                        needle_swing = "anticlockwise"
-                    else:
-                        needle_swing = None
-            
-            else:
-                try:
-                    if q1 in quad_dict_clockwise[q2]:
-                        needle_swing = "clockwise"
-                    else:
-                        needle_swing = None
-                    
-                except KeyError:
-                    if q1 in quad_dict_anticlockwise[q2]:
-                        needle_swing = "anticlockwise"
-                    else:
-                        needle_swing = None
-
-        return needle_swing
-
-    def _get_needle_line_and_pts(self, needle : str) -> tuple[np.array, tuple, tuple]:
+    def __get_equation_and_pts(self, needle : str) -> tuple[np.poly1d, tuple, tuple]:
         """
         Computes the 2 end points of the needle and the equation of the line joning these 
         2 points using 2-point formula. The end point further away from the center of the 
@@ -198,225 +43,363 @@ class Gauge_numeric(object):
         if self.needle.line_white is not None and needle == "white":
             x_white = np.array([self.needle.line_white[0]/self.norm_x, self.needle.line_white[2]/self.norm_x]) 
             y_white = np.array([self.needle.line_white[1]/self.norm_y, self.needle.line_white[3]/self.norm_y]) 
-            line = np.poly1d(fit_line(x_white, y_white))
+            line, _ = curve_fit(linear, x_white, y_white)
             pt1 = (self.needle.line_white[0], self.needle.line_white[1])
             pt2 = (self.needle.line_white[2], self.needle.line_white[3])
 
         if self.needle.line_red is not None and needle == "red":
             x_red = np.array([self.needle.line_red[0]/self.norm_x, self.needle.line_red[2]/self.norm_x]) 
             y_red = np.array([self.needle.line_red[1]/self.norm_y, self.needle.line_red[3]/self.norm_y]) 
-            line = np.poly1d(fit_line(x_red, y_red))
+            line, _ = curve_fit(linear, x_red, y_red)
             pt1 = (self.needle.line_red[0], self.needle.line_red[1])
             pt2 = (self.needle.line_red[2], self.needle.line_red[3])
 
-        return line, pt1, pt2     
+        return np.poly1d(line),pt1,pt2
 
-    def _get_tip_position_wrt_ticks(self, pt_1 : tuple, pt_2 : tuple, pt_tip : tuple, pt_int : tuple,  map : dict, curve : np.poly1d, ecc : str) -> tuple[int, str, float]:
+    def __compute_needle_pivot(self, pt1 : tuple, pt2 : tuple) -> tuple:
         """
-        Computes the position of the tip of the needle with respect to the 2 closest tick marks
-        This computed position is used for the next step to interpolate on the fitted curves 
-        (horizontal or vertical depending on positions of numbers and tick marks)
+        Computes the center of the needle which is considered to be the gauge center 
+        in all further computations. The Hough circle which satisfies both conditions
+        of close to the image center and collinear with the needle is considered to 
+        be the pivot of the needle
         """
-        x1, y1 = pt_1
-        x2, y2 = pt_2
-        xt, yt = pt_tip
-        if ecc == "vertical":
-            ## Determine whether the needle is inside the range, left or right
-            if (xt - x1 > 0 and xt - x2 < 0) or (xt - x1 < 0 and xt - x2 > 0):
-                ## Needle in between 2 numbers
-                nearest_num = map[min(x1, x2)]
-                direction = "right"
-                if self.mode == "linear":
-                    distance = euclidean_dist((x1,y1), pt_int)
-                else:
-                    distance = get_arc_length(min(x1, x2), xt, curve)
+        p1, p2 = np.array(pt1), np.array(pt2)
+        min_dist = 1e20
+        min_dist_from_center = 1e20
+        try:
+            for i in self.needle.circles[0,:]:
+                ## Center of the circle
+                p3 = np.array([i[0], i[1]])
+                dist = np.linalg.norm(np.cross(p2-p1, p1-p3))/np.linalg.norm(p2-p1)
+                if dist < min_dist:
+                    dist_from_center = euclidean_dist((i[0], i[1]), (400,400))
+                    if dist_from_center < min_dist_from_center:
+                        center = (i[0], i[1]) 
+                        min_dist = dist
+                        min_dist_from_center = dist_from_center
+        except TypeError:
+            raise("No hough circles found for needle center estimation")
 
-            else:
-                ## The needle is outside the range of the 2 numbers
-                if xt - x1 > 0 and xt - x2 > 0:
-                    direction = "right"
-                    nearest_num = map[max(x1, x2)]
-                    if self.mode == "linear":
-                        distance = euclidean_dist((x2,y2), pt_int)
-                    else:
-                        distance = get_arc_length(max(x1,x2), xt, curve)
-                
-                elif xt - x1 < 0 and xt - x2 < 0:
-                    direction = "left"
-                    nearest_num = map[min(x1, x2)]
-                    if self.mode == "linear":
-                        distance = euclidean_dist((x1,y1), pt_int)
-                    else:
-                        distance = get_arc_length(xt, min(x1,x2), curve)
-                
-                else:
-                    raise DirectionError("Tip should be in range, to the left or right of the range.")
-        
-        elif ecc == "horizontal":
+        return center
 
-            ## Determine whether the needle is inside the range, top or bottom
-            if (yt - y1 > 0 and yt - y2 < 0) or (yt - y1 < 0 and yt - y2 > 0):
-                ## Needle in between 2 numbers
-                nearest_num = map[min(y1, y2)]
-                direction = "bottom"
-                distance = get_arc_length(min(y1,y2), yt, curve)
-            
-            else:
-                ## The needle is outside the range of the 2 numbers
-                if yt - y1 > 0 and yt - y2 > 0:
-                    print("sdfkjsd")
-                    nearest_num = map[max(y1, y2)]
-                    direction = "bottom"
-                    distance = get_arc_length(max(y1,y2), yt, curve)
-
-                elif yt - y1 < 0 and yt - y2 < 0:
-                    direction = "top"
-                    nearest_num = map[min(y1, y2)]
-                    distance = get_arc_length(yt, min(y1, y2), curve)
-
-        else :
-            raise ValueError("Parabola has to be horizontal or vertical (h/v)")
-
-        return nearest_num, direction, distance
-
-    def _calculate_gauge_value(self, dist : list, tip : tuple, line : np.poly1d, center : tuple, fit : str) -> tuple[np.array, np.array]: 
+    def __get_polynomial_direction(self, p1 : tuple, p2 : tuple, p3 : tuple) -> str:
         """
-        Calculates the value read by the gauge using information about the tip of the needle,  
-        2 closest tick marks and the values they represent. It calibrates the gauge based on 
-        quadratic curve fitting, maps the calibration to the curve and interpolates along this curve
-        to compute the exact value at the tip of the needle
+        Based on the polynomial direction the equation of the curve fitting changes
+        Vertical --> y = ax^2 + bx + c
+        Horizontal --> x = ay^2 + by + c
         """
-        x1, y1 = dist[0].tick_centroid
-        x2, y2 = dist[1].tick_centroid
-        xt, yt = tip
-        needle_swing = Gauge_numeric._get_needle_swing(center, dist)
+        delta_x = max(abs(p1[0]-p2[0]), abs(p1[0]-p3[0]), abs(p2[0]-p3[0]))
+        delta_y = max(abs(p1[1]-p2[1]), abs(p1[1]-p3[1]), abs(p2[1]-p3[1]))
+        if delta_x >= delta_y:
+            return "vertical"
+        else: 
+            return "horizontal"
 
-        x1 /= self.norm_x; y1 /= self.norm_y
-        x2 /= self.norm_x; y2 /= self.norm_y
-        xt /= self.norm_x; yt /= self.norm_y
-        if needle_swing is None:
-            print("Cannot determine needle swing !")
-            return None, None, None
-        
-        calibration = abs(dist[1].number - dist[0].number)
-        if self.mode == "linear":
-            x_fit = [x1, x2]
-            y_fit = [y1, y2]
-            ref_line = np.poly1d(fit_line(np.array(x_fit), np.array(y_fit)))
-            reference = euclidean_dist((x1,y1), (x2,y2))
-            curve_x = ref_line
-            curve_y = None
+    def __interpolate_to_tip(self, dist : list, curve : np.array, point : tuple, center : tuple ,fit : str) -> tuple[int, str, float]:
+        """
+        Interpolates along the computed curve to find the exact position of the needle 
+        with respect to the 2 closest tick marks. In most cases these are tick marks on
+        either side of the needle so interpolation is accurate
+        """
+        ## All points are normalized
+        x1, y1 = dist[0][1].tick_centroid
+        xt, yt = point
 
-            ## Get point of intersection and calibration of the gauge
-            pt_x = (ref_line - line).r
-            pt_y = np.polyval(line, pt_x)
-            pt = (pt_x, pt_y)
-             
-        else :
-            x_fit = [x1 , xt, x2]
-            y_fit = [y1 , yt , y2]
-            curve_x, _ = curve_fit(parabola, x_fit, y_fit)
-            curve_y, _ = curve_fit(parabola, y_fit, x_fit)
-            reference = get_arc_length(min(x1, x2), max(x1, x2), curve_x)
-            pt = None
-
+        nearest_num = dist[0][1].number
         if fit == "vertical":
-            map = {
-                x1 : dist[0].number,
-                x2 : dist[1].number
-            }
-            nearest_num, direction, distance = self._get_tip_position_wrt_ticks((x1, y1), (x2, y2), (xt, yt), pt, map, curve_x, fit)
+            ## Top half of the image
+            if yt < center[1] and y1 < center[1]:
+                if xt > x1 :
+                    direction = "right"
+                else:
+                    direction = "left"
+            ## Bottom half of the image
+            else:
+                if xt > x1:
+                    direction = "left"
+                else:
+                    direction = "right"
+            distance = get_arc_length(min(x1, xt), max(x1, xt), curve)
         
         elif fit == "horizontal":
-            map = {
-                y1 : dist[0].number,
-                y2 : dist[1].number
-            }
-            nearest_num, direction, distance = self._get_tip_position_wrt_ticks((x1, y1), (x2, y2), (xt, yt), pt, map, curve_y, fit)
-        
-        else : 
-            print("Parabola has to be horizontal or vertical (h/v)")
+            ## Left half of the image
+            if xt < center[0] and x1 < center[0]:
+                if yt > y1: 
+                    direction = "left"
+                else:
+                    
+                    direction = "right"
+            
+            ## Right half of the image
+            else:
+                if yt > y1:
+                    direction = "right"
+                else:
+                    direction = "left"
+
+            distance = get_arc_length(min(yt,y1), max(yt,y1), curve)
+
+        else :
+            raise ValueError("Cannot interpolate from nearest tick mark")
+
+        return nearest_num, direction, distance   
+
+    def __calculate_gauge_value(self, tip : tuple, line : np.poly1d, center : tuple, swing : str) -> tuple[float, np.array]:
+        """
+        Runs the actual gauge value computation using the calibration information
+        from the tick marks, the computed curve (horizontal or vertical parabola),
+        and position of the needle tip with respect to these calibrated tick marks
+        """
+        if swing is None:
+            print("Not able to determine needle swing")
             return None, None, None
 
-        print("Range = ("+str(dist[0].number)+","+str(dist[1].number)+")")
-        print("Distance to nearest major tick = {:2.2f}".format(distance))
-        print("Direction wrt nearest major tick = ", direction)
-        print("Nearest associated number = ", nearest_num)
-        print("Calibration value for reference distance = ", calibration)
-        print("Needle swing = ", needle_swing)
+        distance_dict = {}
+        ## Construct the dictionary to identify closest 3 numbers to the needle tip
+        tip = (tip[0] / self.norm_x, tip[1] / self.norm_y)
+        for number, (tick_centroid, numb_centroid) in self.pairs.items():
+            ## Normalize the coordinates before feeding into the distance dictionary (standardization)
+            tick_centroid = (tick_centroid[0] / self.norm_x, tick_centroid[1] / self.norm_y)
+            numb_centroid = (numb_centroid[0] / self.norm_x, numb_centroid[1] / self.norm_y)
+            dist = euclidean_dist(tip, numb_centroid)
+            distance_dict[dist] = tick_distance_object(number, tick_centroid, numb_centroid)
+        distance_dict = list(sorted(distance_dict.items()))
+
+        ## 3 points to fit the curve
+        x1, y1 = distance_dict[0][1].tick_centroid
+        x2, y2 = distance_dict[1][1].tick_centroid
+        try: 
+            if distance_dict[2][0] * self.norm_x < 250:
+                x3, y3 = distance_dict[2][1].tick_centroid
+            else:
+                print("WARNING :- Only 2 ticks identified, gauge reading can be erroneous")
+                x3, y3 = tip
+        except IndexError:
+            print("WARNING :- Only 2 ticks identified, gauge reading can be erroneous")
+            x3, y3 = tip
+
+        calibration = abs(distance_dict[0][1].number - distance_dict[1][1].number)
+        fit = self.__get_polynomial_direction((x1,y1),(x2,y2),(x3,y3))
+        x_fit, y_fit = [x1,x2,x3], [y1,y2,y3]
+        curve = None
+        
+        if fit == "vertical":
+            curve, _ = curve_fit(parabola, x_fit, y_fit)
+            reference = get_arc_length(min(x1, x2), max(x1, x2), curve)
+            try:
+                if distance_dict[2][0] * self.norm_x < 250:
+                    ## Find the point of intersection
+                    roots = (np.poly1d(curve) - line).r
+                    for root in roots:
+                        if root >= 0 and root <= 1:
+                            x_intersection = root
+                            y_intersection = parabola(x_intersection, *curve)
+                            break
+                    intersection = (x_intersection, y_intersection)
+                else:
+                    intersection = tip
+            except IndexError:
+                intersection = tip
+
+        elif fit == "horizontal":
+            curve, _ = curve_fit(parabola, y_fit, x_fit)
+            reference = get_arc_length(min(y1, y2), max(y1, y2), curve)
+            try:
+                if distance_dict[2][0] * self.norm_x < 250:
+                    roots = (np.poly1d(curve) - line).r
+                    for root in roots:
+                        if root >= 0 and root <= 1:
+                            y_intersection = root
+                            x_intersection = parabola(y_intersection, *curve)
+                            break
+                    intersection = (x_intersection, y_intersection)
+                else:
+                    intersection = tip
+            except IndexError:
+                intersection = tip
+        else:
+            print("Parabola has to be vertical or horizontal (h/v)")
+            return None, None, None
+
+        nearest_num, direction, distance = self.__interpolate_to_tip(distance_dict, curve, intersection, center, fit)
+        print("Polynomial fit = ", fit)
+        print("Nearest number = {}".format(nearest_num))
+        print("Direction from nearest number = ",direction)
+        print("Needle swing = ", swing)
+        print("Calibration value = {}".format(calibration))
 
         delta_val = (calibration / reference) * distance
-        if needle_swing == "clockwise":
-            if direction == "left" or direction == "top":
-                return nearest_num - delta_val, curve_x, curve_y
-            elif direction == "right" or direction == "bottom":
-                return nearest_num + delta_val, curve_x, curve_y
+        if swing == "clockwise":
+            if direction == "left" :
+                return nearest_num - delta_val, curve, fit
+            elif direction == "right" :
+                return nearest_num + delta_val, curve, fit
 
         else:
-            if direction == "left" or direction == "top":
-                return nearest_num + delta_val, curve_x, curve_y
-            elif direction == "right" or direction == "bottom":
-                return nearest_num - delta_val, curve_x, curve_y
+            if direction == "left" :
+                return nearest_num + delta_val, curve, fit
+            elif direction == "right" :
+                return nearest_num - delta_val, curve, fit
+
+    def read_gauge(self, image : np.ndarray, visualize : bool = True, needle : str = "white") -> None:
+        """
+        A wrapper method that runs all the required methods to read a gauge and
+        displays the value. Runs the OCR, needle and gauge center estimation, 
+        regionprops (for tick mark extraction), number-tick pairing, and all the
+        commands needed to visualize the results (if needed)
+        """
+        ## Common parameters
+        start = time.time()
+        self.norm_x, self.norm_y = image.shape[0], image.shape[1]
+        curve = None
+
+        ## OCR 
+        self.ocr.run_ocr(image.copy())
+        if len(self.ocr.lookup) < 2:
+            plt.figure(figsize=(12,12))
+            plt.imshow(cv2.cvtColor(image, cv2.COLOR_BGR2RGB))
+            plt.show()
+            print("At least 2 values needed")
+            print("Exitting code")
+            return;
+
+        ## Needle and gauge center estimation
+        self.needle.isolate_needle(image.copy(), needle)
+        if self.needle.line_white is None and self.needle.line_red is None:
+            print("No needle found !")
+            return;
+        line, pt1, pt2 = self.__get_equation_and_pts(needle)
+        center = self.__compute_needle_pivot(pt1, pt2)
+        tip = pt1 if euclidean_dist(pt1, center) > euclidean_dist(pt2, center) else pt2
+        swing = self.ocr.filter_numbers_based_on_position(center)
+
+        ## Regionprops and gauge value calculation
+        ticks, _ = self.props.get_tick_marks(image, self.area_thresh, self.ratio_thresh)
+        self.pairs = self.props.pair_numbers_with_ticks(ticks, self.ocr.lookup.copy(), center)
+        self.val, curve, fit = self.__calculate_gauge_value(tip, line, center, swing)
+        if self.val is not None:
+            print("Gauge Value = {:4.4f}".format(self.val))
+        print("Time taken = {:4.4f}s".format(time.time() - start))  
+
+        if visualize:
+            # OCR bounding boxes
+            for text, obj in self.ocr.lookup.items():
+                [tl, tr, br, bl] = obj.box
+                try:
+                    cv2.line(image, tl, tr, (0,255,0), 2, cv2.LINE_AA)
+                    cv2.line(image, tr, br, (0,255,0), 2, cv2.LINE_AA)
+                    cv2.line(image, br, bl, (0,255,0), 2, cv2.LINE_AA)
+                    cv2.line(image, bl, tl, (0,255,0), 2, cv2.LINE_AA)
+                    cv2.putText(image, text, (tl[0], tl[1] - 10), cv2.FONT_HERSHEY_SIMPLEX, 1, (255,0,0), 2)
+                except cv2.error:
+                    continue
+
+            # Display the image
+            plt.figure(figsize=(12,12))
+            plt.imshow(cv2.cvtColor(image, cv2.COLOR_BGR2RGB))
+
+            # Ticks, needle pivot, and matches (number-tick)
+            plt.plot(tip[0], tip[1], 'go', markersize=15)
+            plt.plot(center[0], center[1], 'g*', markersize=15)
+            plt.plot([i.centroid[0] for i in ticks], [i.centroid[1] for i in ticks], 'b+', markersize=15)
+            for _, (tick, bb) in self.pairs.items():
+                plt.plot([tick[0], bb[0]],[tick[1], bb[1]], 'orange', linewidth=2)
+
+            # Needle line (from the estimated equation)
+            x_plot = np.linspace(0,1,1000)
+            y_line = np.clip(np.polyval(line, x_plot),0,1)
+            plt.plot(x_plot * 800, y_line * 800, 'yellow')
+
+            # Plot the fit polynomial
+            if curve is not None:
+                if fit == "vertical":
+                    x_plot = np.linspace(0,1,1000)
+                    y_plot = np.clip(parabola(x_plot, *curve),0,1)
+                    plt.plot(x_plot * 800, y_plot * 800, 'purple')
+                elif fit == "horizontal":
+                    y_plot = np.linspace(0,1,1000)
+                    x_plot = np.clip(parabola(y_plot, *curve),0,1)
+                    plt.plot(x_plot * 800, y_plot * 800, 'purple')
+            
+            plt.show()
+
+        self.reset()
+        return;
 
 def main(idx : int) -> None:
-    gauge = Gauge_numeric("curve")
+    gauge = Gauge_numeric()
+    gauge.area_thresh = 100
+    gauge.ratio_thresh = 0.85
+    visualize = True
     
-    if idx == 0: ## Works fine 
+    if idx == 0: ## Works fine
         image = cv2.resize(cv2.imread("number_gauge_test/IMG_4761.jpg"),(800,800),cv2.INTER_CUBIC)
-        gauge._read_gauge(image, True, "red", "vertical")
+        gauge.read_gauge(image, visualize, "red")
 
     if idx == 1: ## Works fine
         image = cv2.resize(cv2.imread("number_gauge_test/IMG_4762.jpg"),(800,800),cv2.INTER_CUBIC)
-        gauge._read_gauge(image, True, "red", "vertical")
+        gauge.read_gauge(image, visualize, "red")
 
-    if idx == 2: ## Works fine
+    elif idx == 2: ## Works fine
         image = cv2.resize(cv2.imread("number_gauge_test/IMG_4763.jpg"),(800,800),cv2.INTER_CUBIC)
-        gauge._read_gauge(image, True, "red", "vertical")
+        gauge.read_gauge(image, visualize, "red")
     
-    if idx == 3: ## Works fine --> Horizontal parabola
+    elif idx == 3: ## Works fine 
         image = cv2.resize(cv2.imread("number_gauge_test/IMG_4764.jpg"),(800,800),cv2.INTER_CUBIC)
-        gauge._read_gauge(image, True, "red", "horizontal")
+        gauge.read_gauge(image, visualize, "red")
     
-    if idx == 4: ## Works fine
+    elif idx == 4: ## Works fine 
         image = cv2.resize(cv2.imread("number_gauge_test/IMG_4765.jpg"),(800,800),cv2.INTER_CUBIC)
-        gauge._read_gauge(image, True, "red", "vertical")
+        gauge.read_gauge(image, visualize, "red")
 
-    if idx == 5: ## Works fine
+    elif idx == 5: ## Works fine
         image = cv2.resize(cv2.imread("number_gauge_test/IMG_4766.jpg"),(800,800),cv2.INTER_CUBIC)
-        gauge._read_gauge(image, True, "red", "vertical")
+        gauge.read_gauge(image, visualize, "red")
 
-    if idx == 6: ## OCR mistake (120 getting misread as 20)
+    elif idx == 6: ## Works fine
         image = cv2.resize(cv2.imread("number_gauge_test/IMG_4767.jpg"),(800,800),cv2.INTER_CUBIC)
-        gauge.ocr.kblur = (3,3)
-        gauge.ocr.sigblur = 3
-        gauge._read_gauge(image, True, "red", "vertical")
+        gauge.read_gauge(image, visualize, "red")
 
-    if idx == 7: ## Timeout
-        image = cv2.resize(cv2.imread("number_gauge_test/IMG_4768.jpg"),(800,800),cv2.INTER_CUBIC)
-        gauge._read_gauge(image, True, "white", "vertical")
+    elif idx == 7: ## Works fine
+        image = cv2.resize(cv2.imread("number_gauge_test/IMG_4807.jpg"),(800,800),cv2.INTER_CUBIC)
+        gauge.read_gauge(image, visualize, "white")
 
-    if idx == 8: ## Pairing mismatch due to region props error
-        image = cv2.resize(cv2.imread("number_gauge_test/IMG_4769.jpg"),(800,800),cv2.INTER_CUBIC)
-        gauge._read_gauge(image, True, "white", "vertical")
+    elif idx == 8: ## Works fine
+        image = cv2.resize(cv2.imread("number_gauge_test/IMG_4808.jpg"),(800,800),cv2.INTER_CUBIC)
+        gauge.read_gauge(image, visualize, "white")
 
-    if idx == 9: ## Timeout
-        image = cv2.resize(cv2.imread("number_gauge_test/IMG_4770.jpg"),(800,800),cv2.INTER_CUBIC)
-        gauge.props.kopen = (3,3)
-        gauge.props.kclose = (3,3)
-        gauge._read_gauge(image, True, "white", "vertical")
+    elif idx == 9: ## Needle swing issue
+        image = cv2.resize(cv2.imread("number_gauge_test/IMG_4809.jpg"),(800,800),cv2.INTER_CUBIC)
+        gauge.read_gauge(image, visualize, "white")
 
-    if idx == 10: ## Works fine --> Horizontal parabola
-        image = cv2.resize(cv2.imread("number_gauge_test/IMG_4771.jpg"),(800,800),cv2.INTER_CUBIC)
-        gauge._read_gauge(image, True, "white", "horizontal")
+    elif idx == 10:  ## Works Fine
+        image = cv2.resize(cv2.imread("number_gauge_test/IMG_4804.jpg"),(800,800),cv2.INTER_CUBIC)
+        gauge.read_gauge(image, visualize, "white")
 
-    if idx == 11: ## Works fine --> Horizontal parabola
-        image = cv2.resize(cv2.imread("number_gauge_test/IMG_4772.jpg"),(800,800),cv2.INTER_CUBIC)
-        gauge._read_gauge(image, True, "white", "horizontal")
+    elif idx == 11: ## Works Fine
+        image = cv2.resize(cv2.imread("number_gauge_test/IMG_4805.jpg"),(800,800),cv2.INTER_CUBIC)
+        gauge.read_gauge(image, visualize, "white")
 
-    if idx == 12: ## Works fine --> Horizontal parabola
-        image = cv2.resize(cv2.imread("number_gauge_test/IMG_4773.jpg"),(800,800),cv2.INTER_CUBIC)
-        gauge._read_gauge(image, True, "white", "horizontal")
+    elif idx == 12: ## Works fine
+        image = cv2.resize(cv2.imread("number_gauge_test/IMG_4806.jpg"),(800,800),cv2.INTER_CUBIC)
+        gauge.read_gauge(image, visualize, "white")
 
+    elif idx == 13: ## Works fine
+        image = cv2.resize(cv2.imread("number_gauge_test/IMG_4801.jpg"),(800,800),cv2.INTER_CUBIC)
+        gauge.read_gauge(image, visualize, "red")
+    
+    elif idx == 14: ## Works fine
+        image = cv2.resize(cv2.imread("number_gauge_test/IMG_4802.jpg"),(800,800),cv2.INTER_CUBIC)
+        gauge.read_gauge(image, visualize, "red")
+
+    elif idx == 15: ## Works fine
+        image = cv2.resize(cv2.imread("number_gauge_test/IMG_4803.jpg"),(800,800),cv2.INTER_CUBIC)
+        gauge.read_gauge(image, visualize, "red")
+    
+    else :
+        print("Enter a valid idx value")
+    
+    return;
 
 if __name__ == "__main__":
-    main(1)
+    main(4)

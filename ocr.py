@@ -2,33 +2,32 @@ import numpy as np
 import cv2
 import easyocr
 from dataclasses import dataclass
+from collections import Counter
 from helper import *
-import operator
-from typing import Tuple
 
 import warnings
 warnings.filterwarnings("ignore")
 
 @dataclass
-class ocr_result:
-    box: tuple
-    conf: float
+class box_object:
+    box : list
+    centroid : tuple
+    conf : float
 
-class Ocr(object):
+class Ocr:
     def __init__(self) -> None:
-        super().__init__()
-        self.reader = easyocr.Reader(['en'], gpu=True, verbose=False) 
+        self.__reader = easyocr.Reader(['en'], gpu=True, verbose=False)
         self.lookup = dict()
         self.reset()
-
-    def reset(self) -> None:
-        self.conf = 0.95
+    
+    def reset(self):
+        self.__conf = 0.98
         self.lookup.clear()
         self.kmorph = (35,35)
-        self.kblur = (5,5)
         self.sigblur = 5
+        self.kblur = (5,5)
 
-    def _pre_processing(self, image : np.array) -> np.ndarray:
+    def __preprocessing(self, image : np.ndarray) -> tuple[np.ndarray, np.ndarray]:
         """
         Preprocessing = Image denoising + Contrast enhancement + Morphological transforms
         """
@@ -37,159 +36,157 @@ class Ocr(object):
             gray = cv2.equalizeHist(gray)
         
         blur = cv2.GaussianBlur(gray, self.kblur, self.sigblur)
-        if calculate_brightness(image) > 0.52:
+        if calculate_brightness(image) > 0.575: #0.52:
             hat = cv2.morphologyEx(blur, cv2.MORPH_BLACKHAT, cv2.getStructuringElement(cv2.MORPH_RECT, self.kmorph))
         else:
             hat = cv2.morphologyEx(blur, cv2.MORPH_TOPHAT, cv2.getStructuringElement(cv2.MORPH_RECT, self.kmorph))
 
         return hat
 
-    @staticmethod
-    def _classify(lookup : dict) -> Tuple[dict, str]:
+    def __construct_initial_lookup(self, image : np.ndarray) -> None:
         """
-        Classifies based on the lookup dictionary constructed using the OCR results. If the gauge is not numeric, we are
-        not interested in anything other than a couple of points of interest from the OCR standpoint
+        Constructs an initial lookup dictionary. Need additional filtering based on the
+        detected values, positions of numbers in the image, etc, to make the OCR output 
+        more reliable
         """
-        gauge_type = ""
-        lookup_clone = lookup.copy(); lookup.clear()
-        keys = lookup_clone.keys()
-        if "PUMP" in keys or "ON" in keys or "OFF" in keys:
-            gauge_type = "pump-on-off"
-            for key in ["PUMP", "ON", "OFF"]:
-                try:
-                    lookup[key] = lookup_clone[key]
-                except KeyError:
-                    continue
-
-        elif "MIN" in keys or "MAX" in keys:
-            gauge_type = "min-max"
-            for key in ["MIN", "MAX"]:
-                try:
-                    lookup[key] = lookup_clone[key]
-                except KeyError:
-                    continue
-
-        elif "HIGH" in keys or "LOW" in keys:
-            gauge_type = "high-low"
-            for key in ["HIGH", "LOW"]:
-                try:
-                    lookup[key] = lookup_clone[key]
-                except KeyError:
-                    continue
-
-        elif "HI" in keys or "LO" in keys:
-            gauge_type = "hi-lo"
-            for key in ["HI", "LO"]:
-                try:
-                    lookup[key] = lookup_clone[key]
-                except KeyError:
-                    continue
-
-        else:
-            gauge_type = "numeric"
-            lookup = lookup_clone.copy()
-        
-        return lookup, gauge_type
-
-    def _construct_initial_lookup(self, hat : np.array) -> list:
-        """
-        Fills the lookup dictionary with initial predictions. These predictions have to be filtered and corrected based
-        on the type of the gauge, scale of calibration, etc.
-        """
-        boxes = self.reader.readtext(hat, allowlist="0123456789-PUMPOFNIAXHGLW")
-        key_list = []
-        idx = 0
+        boxes = self.__reader.readtext(image.copy())
         if boxes:
             for box, text, conf in boxes:
-                if conf > self.conf:
+                if conf > self.__conf:
                     (tl, tr, br, bl) = box
                     tl = (int(tl[0]), int(tl[1]))
                     tr = (int(tr[0]), int(tr[1]))
                     bl = (int(bl[0]), int(bl[1]))
                     br = (int(br[0]), int(br[1]))
 
+                    centroid = ((tl[0]+br[0])//2, (tl[1]+br[1])//2)
+
                     try:
-                        ## Recognized text is found with a higher confidence in the dictionary
-                        if text in self.lookup and conf > self.lookup[text].conf:
-                            self.lookup[text] = ocr_result((tl, tr, br, bl), conf)
+                        int(text)
+                        if text in self.lookup and self.lookup[text].conf < conf:
+                            self.lookup[text] = box_object([tl, tr, br, bl], centroid, conf)
+                        
+                        elif text not in self.lookup:
+                            self.lookup[text] = box_object([tl, tr, br, bl], centroid, conf)
+                        
+                        else :
+                            continue
 
-                        ## Recognized text is found with a lower confidence in the dictionary
-                        elif text in self.lookup and conf < self.lookup[text].conf:
-                            self.lookup[text+"_"+str(idx)] = ocr_result((tl, tr, br, bl), conf)
-                            idx+=1
-
-                        ## Recognized text not found in the dictionary
-                        else:
-                            self.lookup[text] = ocr_result((tl, tr, br, bl), conf)
-
-                    except ValueError:
+                    except (KeyError, ValueError):
                         continue
+        return;
 
-                    if text.isnumeric():
-                        if int(text) not in key_list:
-                            key_list.append(int(text))
-
-        else:
-            raise ValueError("No numbers detected by the OCR !!")
-            
-        return key_list       
-    
-    def _filter_values(self, key_list : list) -> list:
+    def __compute_gauge_scale_and_filter(self) -> None:
         """
-        Filters the values in a numeric type gauge based on the most common scale in the dial
-        Ex: - If the OCR detects the following numbers --> [0,5,8,100,200,400,500,600]
-              Most common scale = 100 ==> Retained numbers --> [0,100,200,400,500,600]
+        Computes the possible scale of the gauge using the values detected by the OCR, also
+        filters the numbers based on this scale. This also returs the sorted lookup dictionary
+        Ex :- If the detected numbers are [0,1,50,100,200,400,500]
+        Scale = 50; Numbers Included after filtering = [0,50,100,200,400,500]. The "1" detected
+        is excluded since it is neither a factor, nor a multiple of the scale
         """
-        diff_dict = dict()
-        for i in range(len(key_list) - 1):
-            diff = abs(key_list[i] - key_list[i+1])
-            if not diff in diff_dict:
-                diff_dict[diff] = 1
-            else:
-                diff_dict[diff] += 1
-
+        key_list = [int(key) for key in self.lookup.keys()]
+        key_list.sort()
+        diff_list = [abs(key_list[i] - key_list[i+1]) for i in range(len(key_list) - 1)]
         try:
-            good_numbers = []
-            diff = max(diff_dict.items(), key=operator.itemgetter(1))[0]
-            for i in range(0, len(key_list)):
-                for j in range(i+1, len(key_list)):
-                    curr_diff = key_list[i] - key_list[j] 
-                    ## If the scale is most common one or a multiple / factor --> Consider the number
-                    if curr_diff == diff or curr_diff % diff == 0 or diff % curr_diff == 0:
-                        if key_list[i] not in good_numbers:
-                            good_numbers.append(key_list[i])
-                        if key_list[j] not in good_numbers:
-                            good_numbers.append(key_list[j])
-        except ValueError:
-            return []
+            scale = Counter(diff_list).most_common(1)[0][0]
+        except:
+            return;
 
-        return good_numbers
+        ## Filter the values based on scale
+        diff = abs(key_list[-1] - key_list[-2])
+        good_keys = [str(key_list[i]) for i in range(len(key_list)-1) if \
+            (abs(key_list[i]-key_list[i+1]) == scale) or \
+            (abs(key_list[i]-key_list[i+1]) % scale == 0) or \
+            (scale % abs(key_list[i]-key_list[i+1]) == 0)
+        ]
+        if diff == scale or diff % scale == 0 or scale % diff == 0: good_keys.append(str(key_list[-1]))
+        lookup_clone = self.lookup.copy()
+        self.lookup.clear()
+        for key in good_keys:
+            try:
+                self.lookup[key] = lookup_clone[key]
+            except KeyError:
+                continue
+        return;
 
-    def _run_ocr(self, hat : np.array) -> None:
+    def filter_numbers_based_on_position(self, center : tuple) -> str:
         """
-        Runs OCR, classifies the gauge based on recognized text, cleans up the lookup dictionary to remove any falsely
-        recognized text and stores the dictionary as a class attribute
+        This simultaneously tries to determine the swing of the needle as well as the sign
+        and legitimacy of these predicted numbers. This is based on angular positions of 
+        these numbers with respect to the negative y axis. Modifies the lookup dictionary
+        by modifying negative numbers and removing wrongly detected values
         """
-        if len(hat.shape) > 2:
-            hat = self._pre_processing(hat)
-
-        key_list = self._construct_initial_lookup(hat) 
-        lookup, gauge_type = Ocr._classify(self.lookup.copy())
-
-        if gauge_type == "numeric":
-            good_numbers = self._filter_values(key_list)
-            lookup_clone = self.lookup.copy(); self.lookup.clear()
-            for num in good_numbers:
-                self.lookup[str(num)] = lookup_clone[str(num)]
-
-        else:
-            self.lookup = lookup
+        numbers = [int(i) for i in self.lookup.keys()]
+        obj_list = [obj for obj in self.lookup.values()]
         
-        return;  
+        angle_prev, angle_dict = None, {}
+        clockwise_counter, anticlockwise_counter = 0, 0
+        for i in range(len(numbers)):
+            quad_num = find_quadrant(obj_list[i].centroid, center)
+            angle_num = find_angle_based_on_quad(quad_num, obj_list[i].centroid, center)
+            if angle_prev is not None:
+                if angle_num > angle_prev:
+                    clockwise_counter += 1
+                elif angle_num < angle_prev : 
+                    anticlockwise_counter += 1
+                else:
+                    raise ValueError("Angles of 2 numbers on the gauge cannot be the same")
+            
+            if i == 0:
+                angle_min = angle_num
 
-    def _visualize(self, image : np.array) -> None:
+            if i == len(numbers) - 1:
+                angle_max = angle_num
+
+            angle_prev = angle_num
+            angle_dict[angle_num] = numbers[i]
+
+        ## If the needle moves clockwise
+        if clockwise_counter > anticlockwise_counter:
+            negative = [num for angle, num in angle_dict.items() if angle < angle_min]
+            wrong = [num for angle, num in angle_dict.items() if angle > angle_max and angle_max > angle_min]
+            swing = "clockwise"
+
+        elif anticlockwise_counter > clockwise_counter:
+            negative = [num for angle, num in angle_dict.items() if angle > angle_min]
+            wrong = [num for angle, num in angle_dict.items() if angle < angle_max and angle_max > angle_min]
+            swing = "anticlockwise"
+
+        else :
+            print("clockwise_count = {}".format(clockwise_counter))
+            print("anticlockwise_count = {}".format(anticlockwise_counter))
+            return None
+
+        lookup_clone = {}
+        for num, obj in self.lookup.items():
+            try:
+                if int(num) not in wrong:
+                    if int(num) in negative:
+                        lookup_clone["-"+str(num)] = obj
+                    else:
+                        lookup_clone[str(num)] = obj
+            except (ValueError, KeyError):
+                continue
+        self.lookup = lookup_clone.copy()
+        return swing
+        
+    def run_ocr(self, image : np.ndarray) -> None:
+        """
+        Wrapper method that runs the OCR and filters the values based on scale of 
+        the gauge. The next step of filtering based on the position requires the 
+        information of pivot of the needle (can be computed in the pipeline or can
+        be fed from an external algorithm)
+        """
+        if len(image.shape) > 2:
+            image = self.__preprocessing(image)
+        
+        self.__construct_initial_lookup(image.copy())
+        self.__compute_gauge_scale_and_filter()
+        return; 
+    
+    def visualize(self, image : np.ndarray) -> None:
         for text, obj in self.lookup.items():
-            (tl, tr, br, bl) = obj.box
+            [tl, tr, br, bl] = obj.box
             try:
                 ## Rectangle plotting (normal and tilted)
                 cv2.line(image, tl, tr, (0,255,0), 2, cv2.LINE_AA)
@@ -197,7 +194,7 @@ class Ocr(object):
                 cv2.line(image, br, bl, (0,255,0), 2, cv2.LINE_AA)
                 cv2.line(image, bl, tl, (0,255,0), 2, cv2.LINE_AA)
 
-                cv2.putText(image, text, (tl[0], tl[1] + 10), cv2.FONT_HERSHEY_SIMPLEX, 1, (255,0,0), 2)
+                cv2.putText(image, text, (tl[0], tl[1] - 10), cv2.FONT_HERSHEY_SIMPLEX, 1, (255,0,0), 2)
             
             except cv2.error:
                 continue
@@ -207,25 +204,38 @@ class Ocr(object):
         return;
 
 def main():
-    image = cv2.resize(cv2.imread("ptz_gauge_images/qualitrol_negative_gauge.jpg"),(800,800),cv2.INTER_CUBIC)
-    image = cv2.resize(cv2.imread("ptz_gauge_images/qualitrol_transformer_gauge.jpg"),(800,800),cv2.INTER_CUBIC)
-    image = cv2.resize(cv2.imread("ptz_gauge_images/spot_ptz_gauge.jpg"),(800,800),cv2.INTER_CUBIC)
-    image = cv2.resize(cv2.imread("ptz_gauge_images/spot_ptz_liquidsmall_gauge.jpg"),(800,800),cv2.INTER_CUBIC)
-    image = cv2.resize(cv2.imread("ptz_gauge_images/spot_ptz_gaspressure_gauge.jpg"),(800,800),cv2.INTER_CUBIC)
-    image = cv2.resize(cv2.imread("ptz_gauge_images/spot_ptz_gasvolume_gauge.jpg"),(800,800),cv2.INTER_CUBIC)
+    #image = cv2.resize(cv2.imread("ptz_gauge_images/qualitrol_transformer_gauge.jpg"),(800,800),cv2.INTER_CUBIC)
+    #image = cv2.resize(cv2.imread("ptz_gauge_images/spot_ptz_gauge.jpg"),(800,800),cv2.INTER_CUBIC)
+    #image = cv2.resize(cv2.imread("ptz_gauge_images/spot_ptz_liquidsmall_gauge.jpg"),(800,800),cv2.INTER_CUBIC)
+    #image = cv2.resize(cv2.imread("ptz_gauge_images/qualitrol_pressure_gauge.jpg"),(800,800),cv2.INTER_CUBIC)
+    #image = cv2.resize(cv2.imread("ptz_gauge_images/spot_ptz_gasvolume_gauge.jpg"),(800,800),cv2.INTER_CUBIC)
     #image = cv2.resize(cv2.imread("ptz_gauge_images/spot_ptz_liquidtemp_gauge.jpg"),(800,800),cv2.INTER_CUBIC)
     #image = cv2.resize(cv2.imread("ptz_gauge_images/thyoda_actual_gauge.jpg"),(800,800),cv2.INTER_CUBIC)
-    
-    #image = cv2.resize(cv2.imread("substation_images/spot_ptz_temp_gauge.png"),(800,800),cv2.INTER_CUBIC)
-    #image = cv2.resize(cv2.imread("substation_images/spot_ptz_gasvolume_gauge.png"),(800,800),cv2.INTER_CUBIC)
-    #image = cv2.resize(cv2.imread("substation_images/spot_ptz_breaker_gauge.png"),(800,800),cv2.INTER_CUBIC)
-    image = cv2.resize(cv2.imread("substation_images/qualitrol_temperature_gauge.jpg"),(800,800),cv2.INTER_CUBIC)
-    image = cv2.resize(cv2.imread("substation_images/meppi_pressure_gauge.png"),(800,800),cv2.INTER_CUBIC)
-    #image = cv2.resize(cv2.imread("substation_images/meppi_kpa_pressure_gauge.png"),(800,800),cv2.INTER_CUBIC)
+
+    #image = cv2.resize(cv2.imread("number_gauge_test/IMG_4761.jpg"),(800,800),cv2.INTER_CUBIC)
+    #image = cv2.resize(cv2.imread("number_gauge_test/IMG_4762.jpg"),(800,800),cv2.INTER_CUBIC)
+    #image = cv2.resize(cv2.imread("number_gauge_test/IMG_4763.jpg"),(800,800),cv2.INTER_CUBIC)
+    #image = cv2.resize(cv2.imread("number_gauge_test/IMG_4764.jpg"),(800,800),cv2.INTER_CUBIC)
+
+    #image = cv2.resize(cv2.imread("number_gauge_test/IMG_4765.jpg"),(800,800),cv2.INTER_CUBIC)
+    #image = cv2.resize(cv2.imread("number_gauge_test/IMG_4766.jpg"),(800,800),cv2.INTER_CUBIC)
+    #image = cv2.resize(cv2.imread("number_gauge_test/IMG_4767.jpg"),(800,800),cv2.INTER_CUBIC)
+
+    #image = cv2.resize(cv2.imread("number_gauge_test/IMG_4807.jpg"),(800,800),cv2.INTER_CUBIC)
+    #image = cv2.resize(cv2.imread("number_gauge_test/IMG_4808.jpg"),(800,800),cv2.INTER_CUBIC)
+    #image = cv2.resize(cv2.imread("number_gauge_test/IMG_4809.jpg"),(800,800),cv2.INTER_CUBIC)
+
+    #image = cv2.resize(cv2.imread("number_gauge_test/IMG_4801.jpg"),(800,800),cv2.INTER_CUBIC)
+    #image = cv2.resize(cv2.imread("number_gauge_test/IMG_4802.jpg"),(800,800),cv2.INTER_CUBIC)
+    #image = cv2.resize(cv2.imread("number_gauge_test/IMG_4803.jpg"),(800,800),cv2.INTER_CUBIC)
+
+    #image = cv2.resize(cv2.imread("number_gauge_test/IMG_4804.jpg"),(800,800),cv2.INTER_CUBIC)
+    #image = cv2.resize(cv2.imread("number_gauge_test/IMG_4805.jpg"),(800,800),cv2.INTER_CUBIC)
+    image = cv2.resize(cv2.imread("number_gauge_test/IMG_4806.jpg"),(800,800),cv2.INTER_CUBIC)
 
     ocr = Ocr()
-    ocr._run_ocr(image)
-    ocr._visualize(image)
+    ocr.run_ocr(image)
+    ocr.visualize(image)
     
 if __name__ == "__main__":
     main()

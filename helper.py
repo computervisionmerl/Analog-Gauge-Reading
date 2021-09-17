@@ -1,10 +1,6 @@
 import numpy as np
 import cv2
-from random import randint
-
-"""
-This script defines helper functions for the gauge reading to work
-"""
+from math import degrees, atan2
 
 def euclidean_dist(point1 : tuple, point2 : tuple) -> float:
     """
@@ -14,7 +10,7 @@ def euclidean_dist(point1 : tuple, point2 : tuple) -> float:
 
 def parabola (x, a, b, c):
     """
-    Quadratic polynomial curve
+    Quadratic polynomial curve fitting
     """
     return a*x**2 + b*x + c
 
@@ -24,13 +20,15 @@ def linear(x, a, b):
     """
     return a*x + b 
 
-def calculate_brightness(image : np.array) -> float:
+def calculate_brightness(image : np.ndarray) -> float:
     """
     Checks whether the gauge has a black or white background depending on the image brightness
-    This is under the assumption that the gauge occupies the majority of area in an image
+    This is under the assumption that the gauge occupies the majority of area in an image.
     """
-    gray = cv2.cvtColor(image, cv2.COLOR_RGB2GRAY)
-    hist = cv2.calcHist([gray], [0], None, [256], [0,256])
+    if len(image.shape) > 2:
+        image = cv2.cvtColor(image, cv2.COLOR_RGB2GRAY)
+
+    hist = cv2.calcHist([image], [0], None, [256], [0,256])
     pixels = sum(hist)
     brightness = scale = len(hist)
 
@@ -64,6 +62,23 @@ def find_quadrant(point : tuple, center : tuple) -> int:
     else:
         raise ValueError("Quadrant is not identified")
 
+def find_angle_based_on_quad(quadrant : int, point : tuple, center : tuple) -> float:
+    """
+    Computes the angle between the line joining the center to the point given the quadrant
+    Coordinate system is anticlockwise starting from top right as 1st quadrant.
+    """
+    slope = degrees(atan2(abs(point[1] - center[1]), abs(point[0] - center[0])))
+    if quadrant == 1:
+        return 270 - slope
+    elif quadrant == 2:
+        return 90 + slope
+    elif quadrant == 3:
+        return 90 - slope
+    elif quadrant == 4:
+        return 270 + slope
+    else:
+        raise ValueError("Incorrect quadrant !!")
+
 def get_arc_length(x1 : float, x2 : float, bestmodel : np.poly1d, n_steps : int = 1000) -> float:
     """
     Calculates the arclength along a polynomial curve using piecewise linear estimation
@@ -86,52 +101,3 @@ def get_arc_length(x1 : float, x2 : float, bestmodel : np.poly1d, n_steps : int 
         length += euclidean_dist((x_start, y_start), (x_finish, y_finish))
     
     return length 
-
-def fit_curve(x : np.array, y : np.array) -> np.ndarray:    
-    """
-    Fits a quadratic curve through a set of data points using
-    least squares fitting
-    """
-    iterations = 0
-    bestmodel = None
-    besterr = 1e20
-    while iterations < 50:
-        x_fit = []; y_fit = []
-        for _ in range(50): # 50
-            random_idx = randint(0,len(x)-1)
-            x_fit.append(x[random_idx]); y_fit.append(y[random_idx])
-        
-        poly = np.polyfit(x_fit, y_fit, 2)
-        z_fit = np.polyval(poly, x_fit)
-        err = np.sum((z_fit - y_fit)**2)
-        if err < besterr:
-            besterr = err
-            bestmodel = poly
-
-        iterations += 1
-    
-    return bestmodel
-
-def fit_line(x : np.array, y : np.array) -> np.ndarray:
-    """
-    Line fitting using 2-point formula
-    """
-    return np.polyfit(x, y, 1)
-
-def warp_image(image : np.array) -> np.array:
-    """
-    Computes an affine warp transformation matrix to transform an ellipse back to a circle
-    """
-    contours, _ = cv2.findContours(image, cv2.RETR_TREE, cv2.CHAIN_APPROX_SIMPLE)
-    areas = [cv2.contourArea(cnt) for cnt in contours]
-    sorted_areas = np.sort(areas)
-    cnt = contours[areas.index(sorted_areas[-1])] ## Largest contour
-
-    params = cv2.fitEllipse(cnt)
-    angle = params[2]; scale = params[1]
-    scale = scale[0] / scale[1]
-
-    M = cv2.getRotationMatrix2D((image.shape[0]/2, image.shape[1]/2), angle, 1)
-    M[:,0:2] = np.array([[1,0],[0,scale]]) @ M[:,0:2]
-    M[1,2] = M[1,2] * scale
-    return M
