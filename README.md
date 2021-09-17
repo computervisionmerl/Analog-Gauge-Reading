@@ -1,52 +1,28 @@
 # Analog Gauge Reading
 
-### New algorithm
-
-1) Image acquisition and pre-processing 
-   <br /> a. Ideally need some classification to recognize the type of gauge (analog/digital, tick marks present(y/n), etc.)
-   <br /> b. Right now assume it is a numbered analog gauge with tick marks 
-   
-2) OCR and tick mark extraction
-   <br /> a. Run OCR, get bounding box around numbers (and other calibration text --> Varies in every gauge) on the gauge
-   <br /> b. Identify certain points relative to the bounding boxes to fit a quadratic polynomial (base of the tick mark region)
-   <br /> c. Define a heuristic function to choose another polynomial, both polynomials together encompass the region of tick marks in the image, 
-   <br /> d. Mask the original image to extract region with ticks
-
-3) Needle isolation
-   <br /> a. Run edge detection on the pre-processed image and run probabilistic hough line analysis
-   <br /> b. It is safe to assume that the longest hough line in the image will be the needle (assuming that the gauge takes up the entire image)
- 
-4) Tick mark labeling and interpolation
-   <br /> a. Pair up the tick marks with corresponding numbers (based on contour estimation)
-   <br /> b. Fit a polynomial p(x) through the centroids of these contours (ticks and numbers are along similar curves), find the outliers using RANSAC
-   <br /> c. Find the arc length along p(x) between the needle tip and nearest labeled tick mark and interpolate to find the reading 
-   
 ### OCR analysis
 https://varunharitsa.atlassian.net/wiki/spaces/OR/overview
 
-### Updates --> Gauges with tick marks
+### New algorithm 
 
-1) Image acquisition and pre-processing 
-   <br /> a. Ideally need some classification to recognize the type of gauge (analog/digital, tick marks present(y/n), etc.)
-   <br /> b. Right now assume it is a numbered analog gauge with tick marks
+## Numerical gauges with tick marks
+1) OCR
+   <br /> a. Pre processing (Noise removal + Contrast enhancement + morphological transform)
+   <br /> b. Initial dictionary with recognized numbers and location
+   <br /> c. Filter the recognized numbers based on a common scale between the numbers
    
-2) OCR
-   <br /> a. Get bounding boxes around numbers (and other calibration text --> Varies in every gauge) on the gauge
-   <br /> b. Filter out wrongly detected numbers and non number text and build a lookup dictionary with position and confidence of the predictions
+2) Needle estimation
+   <br /> a. Find equation of the line approximating the needle and the 2 end points of the line segment of the needle
+   <br /> b. Compute the pivot of the needle ==> Can be considered as center of the gauge
+   <br /> c. Recognize negative numbers (if any) using positions of these numbers and update the OCR lookup dictionary
+   <br /> d. Find out the swing of the needle (clockwise / anticlockwise)
 
-3) Region props
-   <br /> a. Extract various connected regions in the image
-   <br /> b. Filter out using 2 thresholds, area thresholding to remove small and very large regions, aspect ratio to get only rectangular regions
-   <br /> c. Pair the tick mark with the OCR number based on euclidean distance criterion
+3) Tick mark extraction
+   <br /> a. Compute the different connected regions in the image, retain only rectangular regions (based on area and aspect ratio)
+   <br /> b. Pair the numbers with corresponding major tick marks again with the distance and area criteria
+   <br /> c. With these matched up tick marks, fit a quadratic polynomial through the ticks in the vicinity of the needle tip
 
-4) Calculate the gauge value
-   <br /> a. Fit a quadratic curve along 3 points (needle tip, 2 closest tick marks)
-   <br /> b. Calculate arc_length along the curve between needle and nearest major tick mark
-   <br /> c. Determine the direction of the needle from the closest tick mark, swing of the needle and calibration of the dial based on reference tick marks and numbers from OCR
-   <br /> d. Interpolate along the curve to find the gauge value
-   
-## Update --> Min-Max and High-Low gauges
-1) OCR for classification
-2) Regionprops to identify the normal swing region
-3) Needle tip --> Whether or not the tip falls inside this region
-Since we often don't need numerical values for these gauges, it is typically easier to read such ones
+4) Final value computation
+   <br /> a. Find point of intersection between the polynomial and the line estimating the needle
+   <br /> b. Interpolate the distance of the point of intersection to the nearest tick mark along the curve
+   <br /> c. Compute the gauge value based on the direction of interpolation
