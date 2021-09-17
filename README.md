@@ -1,11 +1,11 @@
 # Analog Gauge Reading
 
-### OCR analysis
+## OCR analysis
 https://varunharitsa.atlassian.net/wiki/spaces/OR/overview
 
-### New algorithm 
+## New algorithm 
 
-## Numerical gauges with tick marks
+#### Numerical gauges with tick marks
 1) OCR
    <br /> a. Pre processing (Noise removal + Contrast enhancement + morphological transform)
    <br /> b. Initial dictionary with recognized numbers and location
