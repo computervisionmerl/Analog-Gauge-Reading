@@ -104,6 +104,7 @@ class Gauge_numeric(object):
         ## All points are normalized
         x1, y1 = dist[0][1].tick_centroid
         xt, yt = point
+        center = (center[0] / self.norm_x, center[1] / self.norm_y)
 
         nearest_num = dist[0][1].number
         if fit == "vertical":
