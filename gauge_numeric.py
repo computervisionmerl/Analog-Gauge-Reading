@@ -403,4 +403,8 @@ def main(idx : int) -> None:
     return;
 
 if __name__ == "__main__":
+<<<<<<< HEAD
     main(0)
+=======
+    main(4)
+>>>>>>> a07ee7c49e426fe6a63e4bfe3517b0fbb9251b09
