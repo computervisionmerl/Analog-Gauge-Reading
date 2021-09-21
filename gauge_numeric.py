@@ -5,8 +5,8 @@ import matplotlib.pyplot as plt
 from dataclasses import dataclass
 from scipy.optimize import curve_fit
 
+from rectangle_detector import Rectangle_detector
 from ocr import Ocr
-from regionprops import Regionprops
 from needle import Needle
 from helper import *
 
@@ -20,19 +20,16 @@ class Gauge_numeric(object):
     def __init__(self) -> None:
         super().__init__()
         self.ocr = Ocr()
-        self.props = Regionprops()
+        self.props = Rectangle_detector()
         self.needle = Needle()
         self.pairs = {}
         self.reset()
 
-    def reset(self):
+    def reset(self) -> None:
         self.val = None
         self.pairs.clear()
         self.ocr.reset()
         self.props.reset()
-        self.params = [-0.1, 0.5, 1.2]
-        self.ratio_thresh = 0.95
-        self.area_thresh = 200
 
     def __get_equation_and_pts(self, needle : str) -> tuple[np.poly1d, tuple, tuple]:
         """
@@ -104,6 +101,7 @@ class Gauge_numeric(object):
         ## All points are normalized
         x1, y1 = dist[0][1].tick_centroid
         xt, yt = point
+        center = (center[0] / self.norm_x, center[1] / self.norm_y)
 
         nearest_num = dist[0][1].number
         if fit == "vertical":
@@ -124,18 +122,17 @@ class Gauge_numeric(object):
         elif fit == "horizontal":
             ## Left half of the image
             if xt < center[0] and x1 < center[0]:
-                if yt > y1: 
-                    direction = "left"
-                else:
-                    
+                if yt < y1: 
                     direction = "right"
+                else:
+                    direction = "left"
             
             ## Right half of the image
             else:
-                if yt > y1:
-                    direction = "right"
-                else:
+                if yt < y1:
                     direction = "left"
+                else:
+                    direction = "right"
 
             distance = get_arc_length(min(yt,y1), max(yt,y1), curve)
 
@@ -144,7 +141,7 @@ class Gauge_numeric(object):
 
         return nearest_num, direction, distance   
 
-    def __calculate_gauge_value(self, tip : tuple, line : np.poly1d, center : tuple, swing : str) -> tuple[float, np.array]:
+    def __calculate_gauge_value(self, tip : tuple, line : np.poly1d, center : tuple, swing : str) -> tuple[float, np.ndarray, str]:
         """
         Runs the actual gauge value computation using the calibration information
         from the tick marks, the computed curve (horizontal or vertical parabola),
@@ -166,8 +163,14 @@ class Gauge_numeric(object):
         distance_dict = list(sorted(distance_dict.items()))
 
         ## 3 points to fit the curve
-        x1, y1 = distance_dict[0][1].tick_centroid
-        x2, y2 = distance_dict[1][1].tick_centroid
+        try:
+            x1, y1 = distance_dict[0][1].tick_centroid
+            x2, y2 = distance_dict[1][1].tick_centroid
+        except IndexError:
+            print("Not even 2 pairs found !!")
+            print("Exitting code")
+            return None, None, None
+
         try: 
             if distance_dict[2][0] * self.norm_x < 250:
                 x3, y3 = distance_dict[2][1].tick_centroid
@@ -274,8 +277,8 @@ class Gauge_numeric(object):
         swing = self.ocr.filter_numbers_based_on_position(center)
 
         ## Regionprops and gauge value calculation
-        ticks, _ = self.props.get_tick_marks(image, self.area_thresh, self.ratio_thresh)
-        self.pairs = self.props.pair_numbers_with_ticks(ticks, self.ocr.lookup.copy(), center)
+        ticks = self.props.detect_rect(image, False)
+        self.pairs = self.props.pair_ticks_with_numbers(ticks, self.ocr.lookup.copy(), center)
         self.val, curve, fit = self.__calculate_gauge_value(tip, line, center, swing)
         if self.val is not None:
             print("Gauge Value = {:4.4f}".format(self.val))
@@ -328,8 +331,6 @@ class Gauge_numeric(object):
 
 def main(idx : int) -> None:
     gauge = Gauge_numeric()
-    gauge.area_thresh = 100
-    gauge.ratio_thresh = 0.85
     visualize = True
     
     if idx == 0: ## Works fine
@@ -364,11 +365,11 @@ def main(idx : int) -> None:
         image = cv2.resize(cv2.imread("number_gauge_test/IMG_4807.jpg"),(800,800),cv2.INTER_CUBIC)
         gauge.read_gauge(image, visualize, "white")
 
-    elif idx == 8: ## Works fine
+    elif idx == 8: ## OCR too few values
         image = cv2.resize(cv2.imread("number_gauge_test/IMG_4808.jpg"),(800,800),cv2.INTER_CUBIC)
         gauge.read_gauge(image, visualize, "white")
 
-    elif idx == 9: ## Needle swing issue
+    elif idx == 9: ## Needle swing issue 
         image = cv2.resize(cv2.imread("number_gauge_test/IMG_4809.jpg"),(800,800),cv2.INTER_CUBIC)
         gauge.read_gauge(image, visualize, "white")
 
@@ -402,4 +403,4 @@ def main(idx : int) -> None:
     return;
 
 if __name__ == "__main__":
-    main(4)
+    main(0)
