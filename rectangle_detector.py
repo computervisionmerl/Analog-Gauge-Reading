@@ -20,11 +20,13 @@ class Rectangle_detector:
         self.reset()
 
     def reset(self) -> None:
-        self.thresh = 150
-        self.hat_kernel = (35,35)
+        self.thresh = 200
+        self.kmorph = (35,35)
         self.kernel = (5,5)
+        self.rs_thresh = 2 #10
+        self.rl_thresh = 0.35 # 0.5
 
-    def __pre_processing(self, image : np.ndarray) -> np.ndarray:
+    def __preprocessing(self, image : np.ndarray) -> np.ndarray:
         """
         Preprocessing --> Denoising + morphological transforms + binary thresholding
         """
@@ -60,11 +62,14 @@ class Rectangle_detector:
         Detects all the rectangles within a certain area range. These rectangles are
         tick marks more often than not since they are the only rectangular regions on
         the gauge
+
+        Algorithm inspired by the paper "Fast Method for Rectangle Detection" by Cheng Wang.
+        Please refer to the paper for the steps and explanation of the algorithm
         """
-        thresh = self.__pre_processing(image)
+        thresh = self.__preprocessing(image)
         labels = measure.label(thresh, connectivity=2)
         props = measure.regionprops(labels, cache=False)
-        
+
         tick_points = []
         for prop in props:
             if prop.area > 200:
@@ -72,49 +77,46 @@ class Rectangle_detector:
                 points = np.hstack((points[:,1].reshape(-1,1), points[:,0].reshape(-1,1)))
                 centroid = prop.centroid
 
-                min_dist, max_dist = 1e20, 1e-20
-                for point in points:
-                    dist = euclidean_dist(point, centroid)
-                    if dist < min_dist:
-                        min_dist = dist
-                        min_point = point
-
-                    elif dist > max_dist:
-                        max_dist = dist
+                point_dist_map = {euclidean_dist(point, centroid) : point for point in points}
+                point_dist_map = dict(sorted(point_dist_map.items()))
+                distances = list(point_dist_map.keys())
+                points_new = list(point_dist_map.values())
 
                 min_value = 1e20
-                for point in points:
-                    slope = (point[1] - centroid[1]) / (point[0] - centroid[0])
-                    factor = (point[1] - min_point[1]) / (point[0] - min_point[0])
-                    value = abs(slope*factor + 1)
-                    if value < min_value:
-                        min_value = value
-                        b_dist = euclidean_dist(point, centroid)
+                min_point = points_new[0]
+                for point in points_new:
+                    try:
+                        slope = (point[1] - centroid[1]) / (point[0] - centroid[0])
+                        factor = (point[1] - min_point[1]) / (point[0] - min_point[0])
+                        value = abs(slope*factor + 1)
+                        if value < min_value:
+                            min_value = value
+                            b_dist = euclidean_dist(point, centroid)
 
-                rs = abs((prop.area - min_dist*b_dist)/prop.area)
-                rl = abs((max_dist - sqrt(min_dist**2 + b_dist ** 2))/max_dist)
+                    except IndexError:
+                        continue
 
-                if rs > 10:
+                rs = abs((prop.area - distances[0]*b_dist)/prop.area)
+                rl = abs((distances[-1] - sqrt(distances[0]**2 + b_dist ** 2))/distances[-1])
+                if rs > self.rs_thresh:
                     isRectangle = False
-                if rl < 0.5:
+                if rl < self.rl_thresh:
                     isRectangle = True
                 else:
                     isRectangle = False
 
                 if isRectangle:
-                    rect = cv2.minAreaRect(points)
-                    (x,y), (_,_), _ = rect
-                    box = cv2.boxPoints(rect)
-                    box = np.int0(box)
-                    tick_points.append(tick_object((x,y), prop.area, cv2.contourArea(box)))
-        
+                    centroid = (prop.centroid[1], prop.centroid[0])
+                    ((x,y), (w,h), _) = cv2.minAreaRect(points)
+                    tick_points.append(tick_object((x,y), prop.area, w*h))
+
         if visualize:
             plt.figure(figsize=(8,8))
             plt.imshow(labels, cmap='inferno')
 
             plt.figure(figsize=(8,8))
             plt.imshow(cv2.cvtColor(image, cv2.COLOR_RGB2BGR))
-            plt.plot([pt[0] for pt in tick_points], [pt[1] for pt in tick_points], 'b+', markersize=12)
+            plt.plot([pt.centroid[0] for pt in tick_points], [pt.centroid[1] for pt in tick_points], 'b+', markersize=12)
             plt.show()
 
         return tick_points
