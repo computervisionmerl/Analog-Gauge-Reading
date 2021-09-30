@@ -32,12 +32,14 @@ class Rectangle_detector:
         """
         if len(image.shape) > 2:
             gray = cv2.cvtColor(image, cv2.COLOR_RGB2GRAY)
+        else:
+            gray = image.copy()
         
         if gray.std() > 70 or gray.std() < 35:
             gray = cv2.equalizeHist(gray)
     
         blur = cv2.GaussianBlur(gray, (5,5), 5)
-        hat = cv2.morphologyEx(blur, cv2.MORPH_TOPHAT, cv2.getStructuringElement(cv2.MORPH_RECT, self.hat_kernel))
+        hat = cv2.morphologyEx(blur, cv2.MORPH_TOPHAT, cv2.getStructuringElement(cv2.MORPH_RECT, self.kmorph))
         opening = cv2.morphologyEx(hat, cv2.MORPH_ERODE, cv2.getStructuringElement(cv2.MORPH_RECT, self.kernel))
         closing = cv2.morphologyEx(opening, cv2.MORPH_CLOSE, cv2.getStructuringElement(cv2.MORPH_RECT, self.kernel))
         thresh = cv2.threshold(closing, 0, 255, cv2.THRESH_BINARY+cv2.THRESH_OTSU)[1]
@@ -166,6 +168,27 @@ class Rectangle_detector:
             except (IndexError, ValueError, KeyError):
                 continue
 
+        return pairs
+
+    def pair_ticks_with_text(self, lookup: dict, ticks : list, center : tuple) -> dict:
+        """
+        This is primarily for the non numerical gauge types where the text is minimal
+        and not many tick marks which can be paired with text. The optimization criterion is
+        only euclidean ditance in this case
+        """
+        pairs = {}
+        for text, obj in lookup.items():
+            (tl,_,br,_) = obj.box
+            numb_centroid = ((tl[0]+br[0])//2, (tl[1]+br[1])//2)
+            min_dist = 1e20
+            for tick_centroid in ticks:
+                dist = euclidean_dist(tick_centroid, numb_centroid)
+                dt = euclidean_dist(tick_centroid, center)
+                dn = euclidean_dist(numb_centroid, center)
+                if dist < min_dist and dt > dn:
+                    if not self.__point_in_box(obj.box, tick_centroid):
+                        min_dist = dist
+                        pairs[text] = (tick_centroid, numb_centroid)
         return pairs
 
 def main():

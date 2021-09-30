@@ -26,3 +26,21 @@ https://varunharitsa.atlassian.net/wiki/spaces/OR/overview
    <br /> a. Find point of intersection between the polynomial and the line estimating the needle
    <br /> b. Interpolate the distance of the point of intersection to the nearest tick mark along the curve
    <br /> c. Compute the gauge value based on the direction of interpolation
+
+#### Non numerical gauges (4 categories = MIN-MAX, HI-LO, LOW-HIGH, PUMP-ON-OFF)
+1) OCR and Needle estimation
+   <br /> a. Image pre processing ==> Denoising + Morphological operations
+   <br /> b. Construct OCR lookup dictionary with numbers and correspobding locations (No filtering)
+   <br /> c. Compute the equation of the needle line along with the endpoints of the detected needle
+   <br /> d. Classify the gauge into one of the 4 above types and filter the OCR to retain only required information
+
+2) Region props and tick mark extraction
+   <br /> a. Based on the gauge type, we know the color of the tick marks ==> Color masking 
+   <br /> b. Regions which abide by the area thresold and the aspect ratio considered are rectanges
+   <br /> c. Pair the text in the OCR lookup with the identified tick marks reliably
+
+3) Interpolate to the tip of the needle based on minimum and maximum tick mark location
+   <br /> a. If the signed differences of the tip with the min and max tick marks are different, the
+   needle lies in between  
+   <br /> b. Calculate the metric distance from min tick mark / distance from max tick mark to define 
+   a heuristic to determine (normal / abnormal) conditions

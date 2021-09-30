@@ -16,7 +16,7 @@ class box_object:
 
 class Ocr:
     def __init__(self) -> None:
-        self.__reader = easyocr.Reader(['en'], gpu=True, verbose=False)
+        self._reader = easyocr.Reader(['en'], gpu=True, verbose=False)
         self.lookup = dict()
         self.reset()
     
@@ -27,7 +27,7 @@ class Ocr:
         self.sigblur = 5
         self.kblur = (5,5)
 
-    def __preprocessing(self, image : np.ndarray) -> tuple[np.ndarray, np.ndarray]:
+    def _preprocessing(self, image : np.ndarray) -> tuple[np.ndarray, np.ndarray]:
         """
         Preprocessing = Image denoising + Contrast enhancement + Morphological transforms
         """
@@ -49,7 +49,7 @@ class Ocr:
         detected values, positions of numbers in the image, etc, to make the OCR output 
         more reliable
         """
-        boxes = self.__reader.readtext(image.copy())
+        boxes = self._reader.readtext(image.copy())
         if boxes:
             for box, text, conf in boxes:
                 if conf > self.__conf:
@@ -94,7 +94,8 @@ class Ocr:
 
         ## Filter the values based on scale
         diff = abs(key_list[-1] - key_list[-2])
-        good_keys = [str(key_list[i]) for i in range(len(key_list)-1) if \
+        good_keys = [
+            str(key_list[i]) for i in range(len(key_list)-1) if \
             (abs(key_list[i]-key_list[i+1]) == scale) or \
             (abs(key_list[i]-key_list[i+1]) % scale == 0) or \
             (scale % abs(key_list[i]-key_list[i+1]) == 0)
@@ -178,7 +179,7 @@ class Ocr:
         be fed from an external algorithm)
         """
         if len(image.shape) > 2:
-            image = self.__preprocessing(image)
+            image = self._preprocessing(image)
         
         self.__construct_initial_lookup(image.copy())
         self.__compute_gauge_scale_and_filter()

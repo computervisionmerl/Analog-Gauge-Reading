@@ -59,7 +59,7 @@ class Gauge_numeric(object):
 
         return np.poly1d(line),pt1,pt2
 
-    def __compute_needle_pivot(self, pt1 : tuple, pt2 : tuple) -> tuple:
+    def __compute_needle_pivot_points(self, pt1 : tuple, pt2 : tuple) -> tuple:
         """
         Computes the center of the needle which is considered to be the gauge center 
         in all further computations. The Hough circle which satisfies both conditions
@@ -85,7 +85,21 @@ class Gauge_numeric(object):
 
         return center
 
-    def __get_fit_and_tip_direction(self, p1 : tuple, p2 : tuple, p3 : tuple, tip : tuple, center : tuple) -> tuple[str,str]:
+    def __compute_needle_pivot(self, line : np.poly1d):
+        """
+        This function computes the pivot of the needle with the assumption that this point
+        for all gauges lies on the vertical bisector of the gauge. The point of intersection
+        of the needle line and vertical bisector can be identified as the needle pivot
+        """
+        x1, y1 = 400/self.norm_x, 0/self.norm_x
+        x2, y2 = 400/self.norm_x, 800/self.norm_y
+        vertical, _ = curve_fit(linear, (x1,x2), (y1,y2))
+        vertical = np.poly1d(vertical)
+        x_intersection = (vertical - line).r
+        y_intersection = linear(x_intersection, *line)
+        return (x_int*self.norm_x, y_int*self.norm_y)
+
+    def __get_fit_direction(self, p1 : tuple, p2 : tuple, p3 : tuple) -> str:
         """
         Function computes the direction of the parabola (horizontal/vertical)
         and the direction of the tip of the needle from the nearest major tick
@@ -98,9 +112,60 @@ class Gauge_numeric(object):
         else: 
             fit = "horizontal"
 
+        return fit
+
+    def __compute_parameters(self, x_fit : list, y_fit : list, line : np.poly1d, tip : tuple, center : tuple, fit : str) -> tuple[np.poly1d, float, tuple, str]:
+        """
+        This function fits a curve along 3 closest tick marks to the tip of the needle, 
+        computes the point of intersection between the line estimating the needle and 
+        the fit curve, and estimates the direction of this point of intersection from
+        the closest major tick mark and calibrates by calculating a reference distance 
+        (along the same curve) between 2 known tick marks
+        """ 
+        x1, x2, _ = x_fit
+        y1, y2, _ = y_fit
+
+        curve = None
+        if fit == "vertical":
+            curve, _ = curve_fit(parabola, x_fit, y_fit)
+            reference = get_arc_length(min(x1, x2), max(x1, x2), curve)
+            try:
+                if self.distance_dict[2][0] * self.norm_x < 265:
+                    ## Find the point of intersection
+                    roots = (np.poly1d(curve) - line).r
+                    for root in roots:
+                        if root >= 0 and root <= 1:
+                            x_intersection = root
+                            y_intersection = parabola(x_intersection, *curve)
+                            break
+                    intersection = (x_intersection, y_intersection)
+                else:
+                    intersection = tip
+            except IndexError:
+                intersection = tip
+
+        elif fit == "horizontal":
+            curve, _ = curve_fit(parabola, y_fit, x_fit)
+            reference = get_arc_length(min(y1, y2), max(y1, y2), curve)
+            try:
+                if self.distance_dict[2][0] * self.norm_x < 265:
+                    roots = (np.poly1d(curve) - line).r
+                    for root in roots:
+                        if root >= 0 and root <= 1:
+                            y_intersection = root
+                            x_intersection = parabola(y_intersection, *curve)
+                            break
+                    intersection = (x_intersection, y_intersection)
+                else:
+                    intersection = tip
+            except IndexError:
+                intersection = tip
+        else:
+            print("Parabola has to be vertical or horizontal (h/v)")
+            return None, None, None, None
+
         ## Direction to (xt,yt) from (x1,y1)
-        x1, y1 = p1
-        xt, yt = tip
+        xt, yt = intersection
         ## Conditions for direction choosing
         ## Both are in top half of the image
         if y1 <= center[1] and yt <= center[1]:
@@ -131,53 +196,8 @@ class Gauge_numeric(object):
             ## Both are diagonally opposites
             else:
                 raise InterpolationError("Needle is too far from the nearest number")
-
-        return fit, direction
-
-    def __fit_curve_and_intersection(self, x_fit : list, y_fit : list, line : np.poly1d, tip : tuple, fit : str) -> tuple[np.poly1d, float, tuple]:
-        x1, x2, _ = x_fit
-        y1, y2, _ = y_fit
-
-        curve = None
-        if fit == "vertical":
-            curve, _ = curve_fit(parabola, x_fit, y_fit)
-            reference = get_arc_length(min(x1, x2), max(x1, x2), curve)
-            try:
-                if self.distance_dict[2][0] * self.norm_x < 250:
-                    ## Find the point of intersection
-                    roots = (np.poly1d(curve) - line).r
-                    for root in roots:
-                        if root >= 0 and root <= 1:
-                            x_intersection = root
-                            y_intersection = parabola(x_intersection, *curve)
-                            break
-                    intersection = (x_intersection, y_intersection)
-                else:
-                    intersection = tip
-            except IndexError:
-                intersection = tip
-
-        elif fit == "horizontal":
-            curve, _ = curve_fit(parabola, y_fit, x_fit)
-            reference = get_arc_length(min(y1, y2), max(y1, y2), curve)
-            try:
-                if self.distance_dict[2][0] * self.norm_x < 250:
-                    roots = (np.poly1d(curve) - line).r
-                    for root in roots:
-                        if root >= 0 and root <= 1:
-                            y_intersection = root
-                            x_intersection = parabola(y_intersection, *curve)
-                            break
-                    intersection = (x_intersection, y_intersection)
-                else:
-                    intersection = tip
-            except IndexError:
-                intersection = tip
-        else:
-            print("Parabola has to be vertical or horizontal (h/v)")
-            return None, None, None
         
-        return curve, reference, intersection
+        return curve, reference, intersection, direction
 
     def __interpolate_to_tip(self, curve : np.poly1d, pt_int : tuple, fit : str) -> float:
         """
@@ -229,8 +249,8 @@ class Gauge_numeric(object):
 
         nearest_num = self.distance_dict[0][1].number
         calibration = abs(self.distance_dict[0][1].number - self.distance_dict[1][1].number)
-        fit, direction = self.__get_fit_and_tip_direction((x1,y1), (x2,y2), (x3,y3), tip, center)
-        curve, reference, intersection = self.__fit_curve_and_intersection([x1,x2,x3], [y1,y2,y3], line, tip, fit)
+        fit = self.__get_fit_direction((x1,y1), (x2,y2), (x3,y3), tip, center)
+        curve, reference, intersection, direction = self.__compute_parameters([x1,x2,x3], [y1,y2,y3], line, tip, center, fit)
 
         if fit == "vertical":
             ## In between x1, x2
