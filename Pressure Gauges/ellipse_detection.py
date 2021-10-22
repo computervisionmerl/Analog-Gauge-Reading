@@ -1,10 +1,15 @@
 import time
 import cv2
 import numpy as np
+import pandas as pd
 
 from helper import *
+from sklearn.cluster import OPTICS
 from scipy.linalg import eig
 from dataclasses import dataclass
+
+import warnings 
+warnings.filterwarnings("ignore")
 
 @dataclass
 class params:
@@ -28,13 +33,16 @@ class Direct_least_sq_ellipse:
 
     def fit_ellipse(self, points_per_sample : int = 6) -> list:
         """
-        Constructs a generalized eigen system using scatter and 
-        constraint matrices to try to estimate the 6 parameters
-        of a quadratic conic section (ax^2 + bxy + cy^2 + dx + ey + f = 0)
+        Constructs a generalized eigen system using scatter and constraint matrices 
+        to try and estimate the 6 parameters of a quadratic conic section 
+        (ax^2 + bxy + cy^2 + dx + ey + f = 0). 
+
+        For further information please refer to the paper
+        "Direct Least Square Fitting of Ellipses" by Andrew Fitzgibbon, et. al. 
         """
         n = 0
         cluster = list()
-        while n < 100:
+        while n < 1000:
             x, y = list(), list()
             idx = np.random.permutation(self.len)
             for i in range(points_per_sample):
@@ -50,6 +58,7 @@ class Direct_least_sq_ellipse:
             C = np.zeros(S.shape, dtype="float64")
             C[0,2] = C[2,0] = -2; C[1,1] = 1
 
+            # Solve the generalized eigen system
             eigvals, eigvecs = eig(S, C)
             eigvals, eigvecs = np.real(eigvals), np.real(eigvecs)
             # Since the system is +ve semi definite, only 1 negative eigenvalue
@@ -59,9 +68,32 @@ class Direct_least_sq_ellipse:
             except (ValueError, IndexError, np.linalg.LinAlgError) as e:
                 print(str(e) + " in the fit_ellipse() method")
 
-            n += 100
+            n += 1
 
         self.param_cluster = np.array(cluster).reshape(-1,6)
+
+    def cluster_eigenvecs(self) -> np.ndarray:
+        """
+        Implements the OPTICS (Ordering Points To Identify Cluster Structure) clustering
+        to cluster the 6D eigen vector space. The centroid of the largest cluster is taken
+        as the ellipse to segregate the numbers.
+        """
+        clusters = OPTICS(min_samples=5).fit_predict(self.param_cluster)
+        cluster_data = pd.DataFrame(list(zip(self.param_cluster, clusters)), columns=['Params', 'Cluster_id'])
+        max_cluster = cluster_data['Cluster_id'].value_counts()[:5].to_dict()
+        for k,_ in max_cluster.items():
+            if k != -1:
+                mode = k
+        
+        df = cluster_data.loc[cluster_data['Cluster_id'] == mode]
+        param_list = np.array(df['Params'].to_list()).reshape(-1,6)
+        largest_cluster = list()
+        for param in param_list:
+            a, b, c, _, _, _ = param
+            if b**2 - 4*a*c < 0:
+                largest_cluster.append(param)
+
+        return np.array(largest_cluster).reshape(-1,6)
 
     def calculate_ellipse_params(self):
         """
