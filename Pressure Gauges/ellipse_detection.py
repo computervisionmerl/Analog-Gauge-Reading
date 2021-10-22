@@ -95,14 +95,14 @@ class Direct_least_sq_ellipse:
 
         return np.array(largest_cluster).reshape(-1,6)
 
-    def calculate_ellipse_params(self):
+    def calculate_ellipse_params(self, eigenvector : list) -> None:
         """
         Recognizes the ellipse from a list of general conic section equations 
         and extracts computes the 5 required parameters namely center_x, center_y,
         semi major axis, semi minor axis and orientation
         """
-        for (a,b,c,d,e,f) in self.param_cluster:
-            det = 4*a*c - b*b
+        for (a,b,c,d,e,f) in eigenvector:
+            det = 4*a*c - b**2
             if det > 0:
                 try:
                     E = math.sqrt(b**2 + (a-c)**2)
@@ -166,8 +166,11 @@ def main():
 
     start = time.time()
     ell = Direct_least_sq_ellipse(np.array(points))
-    ell.fit_ellipse(max(len(points), 20))
-    ell.calculate_ellipse_params()
+    ell.fit_ellipse(min(len(points)-1, 20))
+    largest_cluster = ell.cluster_eigenvecs()
+    eigenvector = largest_cluster.mean(axis=0)
+    
+    ell.calculate_ellipse_params([eigenvector])
     print("Time taken = {:4.4f}s".format(time.time() - start))
     ell.visualize_ellipse(image)
 
