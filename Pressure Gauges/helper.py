@@ -42,4 +42,46 @@ def euclidean_dist(point1 : tuple, point2 : tuple) -> float:
     """
     Returns pixel euclidean distance between 2 points
     """
-    return np.sqrt((point1[0] - point2[0])**2 + (point1[1] - point2[1])**2)
+    return math.sqrt((point1[0] - point2[0])**2 + (point1[1] - point2[1])**2)
+
+def find_quadrant(point : tuple, center : tuple) -> int:
+    """
+    Returns the quadrant of a point based on the the coordinates of the point and center 
+    Coordinate system is anticlockwise starting from top right as 1st quadrant
+    """
+    ## First quadrant --> x(+ve), y(-ve)
+    if point[0] >= center[0] and point[1] < center[1]:
+        return 1
+    
+    ## Second quadrant --> x(-ve), y(-ve)
+    elif point[0] < center[0] and point[1] <= center[1]:
+        return 2
+    
+    ## Third quadrant --> x(-ve), y(+ve)
+    elif point[0] <= center[0] and point[1] > center[1]:
+        return 3
+
+    ## Fourth quadrant --> x(+ve), y(+ve)
+    elif point[0] > center[0] and point[1] >= center[1]:
+        return 4
+
+    else:
+        raise ValueError("Quadrant is not identified (Should be 1, 2, 3, or 4)")
+
+def find_angle_based_on_quad(quadrant : int, point : tuple, center : tuple) -> float:
+    """
+    Computes the angle between the line joining the center and point given, and the negative
+    y-axis given the quadrant. Coordinate system is anticlockwise starting from top right as 
+    the 1st quadrant.
+    """
+    slope = math.degrees(math.atan2(abs(point[1] - center[1]), abs(point[0] - center[0])))
+    if quadrant == 1:
+        return 270 - slope
+    elif quadrant == 2:
+        return 90 + slope
+    elif quadrant == 3:
+        return 90 - slope
+    elif quadrant == 4:
+        return 270 + slope
+    else:
+        raise ValueError("Incorrect quadrant !! (Should be 1, 2, 3, or 4)")

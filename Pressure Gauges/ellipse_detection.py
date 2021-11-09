@@ -41,6 +41,40 @@ class Ellipse_dlsq:
         eigvals, eigvecs = np.real(eigvals), np.real(eigvecs)
         return eigvals, eigvecs
 
+    def set_data(self, points : np.ndarray) -> None:
+        """
+        Sets the points list and separates the x, y coordinates into separate respective arrays. This is to
+        solve the generalized eigensystem
+        """
+        self.data_x = np.array(points[:,0])
+        self.data_y = np.array(points[:,1])
+        self.len = len(self.data_x)
+        return;
+
+    def filter_points(self, x : np.ndarray, y : np.ndarray, idx : int, eigvecs : np.ndarray) -> tuple[np.ndarray, np.ndarray]:
+        """
+        Takes a detected ellipse, calculates the outliers of the ellipse and removes them. This then
+        gives us a cleaner set of points to estimate the ellipse better on the second attempt
+        """
+        ellipse = self.calculate_ellipse_params(eigvecs[:,idx].flatten())
+        dist_dict = dict()
+        for (xi,yi) in zip(x,y):
+            h,k = ellipse.center
+            K1 = (xi - h)**2 / ellipse.A ** 2
+            K2 = (yi - k)**2 / ellipse.B ** 2
+            dist = K1 + K2 - 1
+            dist_dict[dist] = (xi,yi)
+
+        keys = list(sorted(dist_dict))
+        keys = keys[0:int(0.8*len(keys))]
+        x_new, y_new = list(), list()
+        for key in keys:
+            (xi,yi) = dist_dict[key]
+            x_new.append(xi)
+            y_new.append(yi)
+        
+        return np.array(x_new), np.array(y_new)
+
     def fit_ellipse(self, points_per_sample : int = 6, n_iter : int = 50) -> list:
         """
         Fits ellipses on batches of points for a number of iterations, and refines the ellipse fitting based on 
@@ -59,29 +93,11 @@ class Ellipse_dlsq:
             try:
                 x, y = np.array(x), np.array(y)
                 eigvals, eigvecs = self.generalized_eigensystem(x, y)
-
                 # Since the system is +ve semi definite, only 1 negative eigenvalue
                 idx = np.where(eigvals < 0)[0]
-                eigenvector = eigvecs[:,idx]
-                ellipse = self.calculate_ellipse_params(eigenvector.flatten())
-                dist_dict = dict()
-                for (xi,yi) in zip(x,y):
-                    h,k = ellipse.center
-                    K1 = (xi - h)**2 / ellipse.A ** 2
-                    K2 = (yi - k)**2 / ellipse.B ** 2
-                    dist = K1 + K2
-                    dist_dict[dist] = (xi,yi)
-
-                keys = [key for key in list(dist_dict.keys()) if key < 100]
-                #keys = list(sorted(dist_dict))
-                #keys = keys[0:int(0.8*len(keys))]
-                x, y = list(), list()
-                for key in keys:
-                    (xi,yi) = dist_dict[key]
-                    x.append(xi)
-                    y.append(yi)
-                x, y = np.array(x), np.array(y)
-                eigvals, eigvecs = self.generalized_eigensystem(x, y)
+                # Filter the points and estimate the ellipse again to get a better estimate
+                x_new, y_new = self.filter_points(x, y, idx, eigvecs)
+                eigvals, eigvecs = self.generalized_eigensystem(x_new, y_new)
                 idx = np.where(eigvals < 0)[0]
                 cluster.append(eigvecs[:,idx])
 
@@ -161,25 +177,6 @@ class Ellipse_dlsq:
             print("WARNING :- Conic section is not an ellipse")
             return None       
 
-    def detect_tick_ellipse(self, edge_map : np.ndarray, n_points : int = 100) -> params:
-        """
-        I/O for the ellipse detection module. Accepts and edge_map or binary skeleton image as the input and
-        returns the parameters of the ellipse which is most commonly detected
-        """
-        points = np.argwhere(edge_map != 0)
-        self.data_x = np.array(points[:,0])
-        self.data_y = np.array(points[:,1])
-        self.len = len(self.data_x)
-
-        try:
-            self.fit_ellipse(points_per_sample=n_points)
-        except IndexError:
-            self.fit_ellipse(points_per_sample=int(0.9*self.len))
-
-        largest_cluster = self.cluster_eigenvecs()
-        eigenvector = largest_cluster.mean(axis=0)
-        return self.calculate_ellipse_params(eigenvector.flatten())
-
     def visualize_ellipse(self, image : np.ndarray, ellipse : params) -> None:
         """
         For visualization purposes only
@@ -201,6 +198,13 @@ def main():
     #image = cv2.resize(cv2.imread("substation_images/negative_pressure_gauge.jpg"), (800,800), cv2.INTER_CUBIC)
     #image = cv2.resize(cv2.imread("substation_images/trafag_pressure_gauge.jpg"),(800,800),cv2.INTER_CUBIC)
 
+    #image = cv2.resize(cv2.imread("mounted pressure gauges/img-2.jpeg"),(800,800),cv2.INTER_CUBIC)
+    #image = cv2.resize(cv2.imread("mounted pressure gauges/img-8.jpeg"),(800,800),cv2.INTER_CUBIC)
+    #image = cv2.resize(cv2.imread("mounted pressure gauges/img-11.jpeg"),(800,800),cv2.INTER_CUBIC)
+    #image = cv2.resize(cv2.imread("mounted pressure gauges/img-16.jpeg"),(800,800),cv2.INTER_CUBIC)
+    #image = cv2.resize(cv2.imread("mounted pressure gauges/img-23.jpeg"),(800,800),cv2.INTER_CUBIC)
+    #image = cv2.resize(cv2.imread("mounted pressure gauges/img-25.jpeg"),(800,800),cv2.INTER_CUBIC)
+
     ell = Ellipse_dlsq()
     start = time.time()
     gray = cv2.cvtColor(image, cv2.COLOR_RGB2GRAY)
@@ -209,15 +213,19 @@ def main():
 
     blur = cv2.GaussianBlur(gray, (5,5), 5)
     if calculate_brightness(image) > 0.52:
-        hat = cv2.morphologyEx(blur, cv2.MORPH_BLACKHAT, cv2.getStructuringElement(cv2.MORPH_RECT, (35,35)))
+        hat = cv2.morphologyEx(blur, cv2.MORPH_BLACKHAT, cv2.getStructuringElement(cv2.MORPH_RECT, (24,24)))
     else:
-        hat = cv2.morphologyEx(blur, cv2.MORPH_TOPHAT, cv2.getStructuringElement(cv2.MORPH_RECT, (35,35)))
+        hat = cv2.morphologyEx(blur, cv2.MORPH_TOPHAT, cv2.getStructuringElement(cv2.MORPH_RECT, (24,24)))
     thresh = cv2.threshold(hat, 0, 255, cv2.THRESH_BINARY+cv2.THRESH_OTSU)[1]
 
     thresh_float = np.array(thresh, dtype="float64") / 255.
     edge_map = np.array(skeletonize(thresh_float)*255., dtype="uint8")
+    pixels = np.argwhere(edge_map != 0)
 
-    ellipse = ell.detect_tick_ellipse(edge_map)
+    ell.set_data(pixels)
+    ell.fit_ellipse(points_per_sample=1500, n_iter=100)
+    eigenvector = ell.cluster_eigenvecs().mean(axis=0)
+    ellipse = ell.calculate_ellipse_params(eigenvector.flatten())
     print("Time taken = {:4.4f}s".format(time.time() - start))
     ell.visualize_ellipse(image, ellipse)
 
